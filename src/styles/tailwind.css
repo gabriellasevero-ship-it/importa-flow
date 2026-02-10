@@ -1,0 +1,11 @@
+@import 'tailwindcss' source(none);
+@source '../**/*.{js,ts,jsx,tsx}';
+
+@import 'tw-animate-css';
+
+/* Apply Inter font family to all elements */
+@layer base {
+  * {
+    font-family: var(--font-family);
+  }
+}
