@@ -52,14 +52,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(null);
       }
     });
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadUser(session.user.id).finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-    return () => subscription.unsubscribe();
+    const stopLoading = () => setLoading(false);
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (session?.user) {
+          loadUser(session.user.id).finally(stopLoading);
+        } else {
+          stopLoading();
+        }
+      })
+      .catch((err) => {
+        console.error('Erro ao obter sessão:', err);
+        stopLoading();
+      });
+    const timeout = window.setTimeout(stopLoading, 10000);
+    return () => {
+      window.clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, [loadUser]);
 
   const login = async (email: string, password: string) => {
