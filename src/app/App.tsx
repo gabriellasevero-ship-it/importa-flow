@@ -34,12 +34,35 @@ function ClientCatalogEntry({ linkId, representanteId }: { linkId: string; repre
   );
 }
 
+const VIEW_MODE_KEY = 'importaflow_view_mode';
+
 function AppContent() {
   const { isAuthenticated, user, loading: authLoading } = useAuth();
   const { unreadCount } = useNotifications();
   const [activeTab, setActiveTab] = useState('home');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [viewMode, setViewMode] = useState<'admin' | 'representante'>(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      return saved === 'representante' || saved === 'admin' ? saved : 'admin';
+    } catch {
+      return 'admin';
+    }
+  });
+
+  const isAdmin = user?.role === 'admin';
+  const displayAsAdmin = isAdmin && viewMode === 'admin';
+
+  const handleViewModeChange = (mode: 'admin' | 'representante') => {
+    setViewMode(mode);
+    setActiveTab('home');
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
 
   // Check if accessing via client catalog link
   const isClientCatalogView = window.location.pathname.startsWith('/catalogo/');
@@ -74,7 +97,7 @@ function AppContent() {
   }
 
   const renderContent = () => {
-    if (user?.role === 'admin') {
+    if (displayAsAdmin) {
       switch (activeTab) {
         case 'home':
           return <Dashboard onNavigate={setActiveTab} />;
@@ -106,7 +129,7 @@ function AppContent() {
   };
 
   const getPageTitle = () => {
-    if (user?.role === 'admin') {
+    if (displayAsAdmin) {
       switch (activeTab) {
         case 'home':
           return 'Dashboard';
@@ -118,25 +141,44 @@ function AppContent() {
           return 'Dashboard';
       }
     }
+    switch (activeTab) {
+      case 'home':
+        return 'Dashboard';
+      case 'catalog':
+        return 'Catálogo';
+      case 'clients':
+        return 'Clientes';
+      case 'orders':
+        return 'Pedidos';
+      case 'commissions':
+        return 'Comissões';
+      case 'transportadoras':
+        return 'Transportadoras';
+      default:
+        return 'Dashboard';
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <Header 
-        title={getPageTitle()} 
+      <Header
+        title={getPageTitle()}
         onNotificationsClick={() => setShowNotifications(true)}
         unreadNotifications={unreadCount}
+        showNotificationsButton={!displayAsAdmin}
+        viewMode={isAdmin ? viewMode : undefined}
+        onViewModeChange={isAdmin ? handleViewModeChange : undefined}
       />
-      
+
       <div className="flex">
         {user && (
           <Sidebar
             activeTab={activeTab}
             onTabChange={setActiveTab}
-            userRole={user.role as 'representante' | 'admin'}
+            userRole={displayAsAdmin ? 'admin' : 'representante'}
           />
         )}
-        
+
         <main className="flex-1 max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6 w-full">
           {renderContent()}
         </main>
@@ -146,7 +188,7 @@ function AppContent() {
         <BottomNav
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          userRole={user.role as 'representante' | 'admin'}
+          userRole={displayAsAdmin ? 'admin' : 'representante'}
         />
       )}
 

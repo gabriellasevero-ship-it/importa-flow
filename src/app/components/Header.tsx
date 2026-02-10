@@ -1,5 +1,5 @@
 import React from 'react';
-import { Package, LogOut, User, Bell } from 'lucide-react';
+import { Package, LogOut, User, Bell, LayoutDashboard, UserCircle } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,9 +8,19 @@ interface HeaderProps {
   title?: string;
   onNotificationsClick?: () => void;
   unreadNotifications?: number;
+  showNotificationsButton?: boolean;
+  viewMode?: 'admin' | 'representante';
+  onViewModeChange?: (mode: 'admin' | 'representante') => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ title, onNotificationsClick, unreadNotifications = 0 }) => {
+export const Header: React.FC<HeaderProps> = ({
+  title,
+  onNotificationsClick,
+  unreadNotifications = 0,
+  showNotificationsButton = false,
+  viewMode,
+  onViewModeChange,
+}) => {
   const { user, logout } = useAuth();
 
   return (
@@ -28,7 +38,35 @@ export const Header: React.FC<HeaderProps> = ({ title, onNotificationsClick, unr
           </div>
 
           <div className="flex items-center gap-3">
-            {user && user.role === 'representante' && onNotificationsClick && (
+            {viewMode !== undefined && onViewModeChange && (
+              <div className="flex rounded-lg overflow-hidden border border-white/20 bg-white/5">
+                <Button
+                  onClick={() => onViewModeChange('representante')}
+                  variant="ghost"
+                  size="sm"
+                  className={`rounded-none text-primary-foreground hover:bg-white/10 ${
+                    viewMode === 'representante' ? 'bg-white/15' : ''
+                  }`}
+                  title="Ambiente do representante"
+                >
+                  <UserCircle className="w-4 h-4 mr-1.5 hidden sm:inline" />
+                  <span className="text-sm">Representante</span>
+                </Button>
+                <Button
+                  onClick={() => onViewModeChange('admin')}
+                  variant="ghost"
+                  size="sm"
+                  className={`rounded-none text-primary-foreground hover:bg-white/10 ${
+                    viewMode === 'admin' ? 'bg-white/15' : ''
+                  }`}
+                  title="Backoffice"
+                >
+                  <LayoutDashboard className="w-4 h-4 mr-1.5 hidden sm:inline" />
+                  <span className="text-sm">Backoffice</span>
+                </Button>
+              </div>
+            )}
+            {user && showNotificationsButton && onNotificationsClick && (
               <Button
                 onClick={onNotificationsClick}
                 variant="ghost"

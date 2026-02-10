@@ -95,6 +95,16 @@ Políticas: leitura pública (ou para authenticated); upload/update/delete apena
 
 Não usar mais login mock: passar a usar `supabase.auth.signInWithPassword` e `supabase.auth.signUp`, e ler role/dados em `profiles`.
 
+### Definir usuário como admin (backoffice)
+
+Por padrão, todo usuário criado recebe `role = 'representante'`. Para acessar o backoffice (Importadoras, Representantes, Dashboard admin), é preciso definir `role = 'admin'` na tabela `profiles`:
+
+- **Opção A – Table Editor:** Supabase → Table Editor → **profiles** → localize a linha do usuário → edite a coluna **role** para `admin` → Save.
+- **Opção B – SQL Editor:** Execute (troque o email pelo do usuário que será admin):
+  ```sql
+  UPDATE public.profiles SET role = 'admin' WHERE email = 'seu-email-admin@exemplo.com';
+  ```
+
 ---
 
 ## 6. Integração no app (remover mock)
