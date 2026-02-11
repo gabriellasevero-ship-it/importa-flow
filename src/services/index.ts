@@ -7,3 +7,4 @@ export * from './transportadoras';
 export * from './orders';
 export * from './commissions';
 export * from './notifications';
+export * from './representantes';

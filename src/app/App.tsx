@@ -51,7 +51,7 @@ function AppContent() {
     }
   });
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'backoffice';
   const displayAsAdmin = isAdmin && viewMode === 'admin';
 
   const handleViewModeChange = (mode: 'admin' | 'representante') => {
@@ -100,19 +100,19 @@ function AppContent() {
     if (displayAsAdmin) {
       switch (activeTab) {
         case 'home':
-          return <Dashboard onNavigate={setActiveTab} />;
+          return <Dashboard onNavigate={setActiveTab} mode="admin" />;
         case 'importers':
           return <Importers />;
         case 'representatives':
           return <Representatives />;
         default:
-          return <Dashboard onNavigate={setActiveTab} />;
+          return <Dashboard onNavigate={setActiveTab} mode="admin" />;
       }
     }
 
     switch (activeTab) {
       case 'home':
-        return <Dashboard onNavigate={setActiveTab} />;
+        return <Dashboard onNavigate={setActiveTab} mode="representante" />;
       case 'catalog':
         return <Catalog onProductSelect={setSelectedProduct} />;
       case 'clients':
@@ -124,7 +124,7 @@ function AppContent() {
       case 'transportadoras':
         return <Transportadoras />;
       default:
-        return <Dashboard onNavigate={setActiveTab} />;
+        return <Dashboard onNavigate={setActiveTab} mode="representante" />;
     }
   };
 

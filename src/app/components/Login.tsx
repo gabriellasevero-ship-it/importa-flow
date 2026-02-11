@@ -6,17 +6,87 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 import { useAuth } from '@/contexts/AuthContext';
 
 export const Login: React.FC = () => {
-  const { login } = useAuth();
+  const { login, registerRepresentative, resetPassword } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
 
   const handleLogin = async () => {
+    setErrorMessage(null);
+    setInfoMessage(null);
     setLoading(true);
     try {
       await login(email, password);
     } catch (err) {
       console.error(err);
+      const message = err instanceof Error ? err.message : 'Falha ao entrar. Tente novamente.';
+      setErrorMessage(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    setErrorMessage(null);
+    setInfoMessage(null);
+
+    if (!name || !email || !password || !confirmPassword) {
+      setErrorMessage('Preencha nome, e-mail e senha.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMessage('As senhas não conferem.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await registerRepresentative({
+        name,
+        email,
+        password,
+        phone: phone || undefined,
+      });
+      setInfoMessage(
+        'Cadastro enviado para aprovação. Assim que o backoffice aprovar, você poderá acessar com seu e-mail e senha.'
+      );
+      setMode('login');
+      setPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      console.error(err);
+      const message =
+        err instanceof Error ? err.message : 'Falha ao cadastrar. Tente novamente.';
+      setErrorMessage(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setErrorMessage(null);
+    setInfoMessage(null);
+    if (!email) {
+      setErrorMessage('Informe o e-mail para recuperar a senha.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await resetPassword(email);
+      setInfoMessage(
+        'Se este e-mail estiver cadastrado, você receberá um link para redefinir a senha.'
+      );
+    } catch (err) {
+      console.error(err);
+      const message =
+        err instanceof Error ? err.message : 'Falha ao enviar e-mail de recuperação.';
+      setErrorMessage(message);
     } finally {
       setLoading(false);
     }
@@ -35,12 +105,25 @@ export const Login: React.FC = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Entrar</CardTitle>
+            <CardTitle>{mode === 'login' ? 'Entrar' : 'Criar conta como representante'}</CardTitle>
             <CardDescription>
-              Use seu email e senha cadastrados
+              {mode === 'login'
+                ? 'Use seu email e senha cadastrados'
+                : 'Preencha seus dados para solicitar acesso como representante'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {mode === 'register' && (
+              <div className="space-y-2">
+                <label className="text-sm">Nome completo</label>
+                <Input
+                  type="text"
+                  placeholder="Seu nome"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm">Email</label>
               <div className="relative">
@@ -54,6 +137,17 @@ export const Login: React.FC = () => {
                 />
               </div>
             </div>
+            {mode === 'register' && (
+              <div className="space-y-2">
+                <label className="text-sm">Telefone (opcional)</label>
+                <Input
+                  type="tel"
+                  placeholder="(00) 00000-0000"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm">Senha</label>
               <div className="relative">
@@ -67,13 +161,75 @@ export const Login: React.FC = () => {
                 />
               </div>
             </div>
-            <Button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-primary hover:bg-primary/90"
-            >
-              {loading ? 'Entrando...' : 'Entrar'}
-            </Button>
+            {mode === 'register' && (
+              <div className="space-y-2">
+                <label className="text-sm">Confirmar senha</label>
+                <Input
+                  type="password"
+                  placeholder="Repita a senha"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+            )}
+            {errorMessage && (
+              <p className="text-sm text-destructive text-center">{errorMessage}</p>
+            )}
+            {infoMessage && !errorMessage && (
+              <p className="text-sm text-center text-emerald-600">{infoMessage}</p>
+            )}
+            {mode === 'login' ? (
+              <>
+                <Button
+                  onClick={handleLogin}
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90"
+                >
+                  {loading ? 'Entrando...' : 'Entrar'}
+                </Button>
+                <div className="flex flex-col gap-2 text-sm text-center mt-2">
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-primary hover:underline"
+                  >
+                    Esqueci minha senha
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('register');
+                      setErrorMessage(null);
+                      setInfoMessage(null);
+                    }}
+                    className="text-primary hover:underline"
+                  >
+                    Me cadastrar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Button
+                  onClick={handleRegister}
+                  disabled={loading}
+                  className="w-full bg-primary hover:bg-primary/90"
+                >
+                  {loading ? 'Enviando cadastro...' : 'Cadastrar'}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setErrorMessage(null);
+                    setInfoMessage(null);
+                  }}
+                  className="block w-full text-sm text-center text-primary hover:underline mt-2"
+                >
+                  Já tenho conta • Voltar para login
+                </button>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

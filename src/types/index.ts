@@ -2,7 +2,7 @@ export type OrderStatus = 'rascunho' | 'aberto' | 'faturado' | 'cancelado';
 
 export type OrderOrigin = 'representante' | 'cliente';
 
-export type UserRole = 'representante' | 'admin';
+export type UserRole = 'representante' | 'admin' | 'backoffice';
 
 export interface User {
   id: string;

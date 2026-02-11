@@ -3,10 +3,18 @@ import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getProfile } from '@/services/profile';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { createRepresentative } from '@/services/representantes';
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  registerRepresentative: (input: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+  }) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
   loading: boolean;
@@ -31,12 +39,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const loadUser = useCallback(async (authUserId: string) => {
-    try {
-      const profile = await getProfile(authUserId);
-      setUser(profile);
-    } catch (e) {
-      console.error('Erro ao carregar perfil:', e);
-      setUser(null);
+    const profile = await getProfile(authUserId);
+    setUser(profile);
+    if (!profile) {
+      throw new Error('Perfil não encontrado. Verifique se seu usuário existe na tabela profiles do Supabase.');
     }
   }, []);
 
@@ -73,6 +79,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [loadUser]);
 
+  const LOGIN_TIMEOUT_MS = 15000;
+  const PROFILE_TIMEOUT_MS = 8000;
+
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured()) {
       setUser({
@@ -85,7 +94,66 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    if (data.user) await loadUser(data.user.id);
+    if (!data.user) return;
+
+    const profileTimeout = new Promise<never>((_, reject) => {
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              'Perfil demorou para responder. Verifique no Supabase (Table Editor → profiles) se existe uma linha com o id do seu usuário.'
+            )
+          ),
+        PROFILE_TIMEOUT_MS
+      );
+    });
+    await Promise.race([loadUser(data.user.id), profileTimeout]);
+  };
+
+  const registerRepresentative = async (input: {
+    name: string;
+    email: string;
+    password: string;
+    phone?: string;
+  }) => {
+    if (!isSupabaseConfigured()) {
+      throw new Error(
+        'Cadastro de representante só está disponível quando o Supabase estiver configurado.'
+      );
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: input.email,
+      password: input.password,
+    });
+    if (error) throw error;
+    if (!data.user) return;
+
+    try {
+      // Cria o registro na tabela de representantes como "pendente"
+      await createRepresentative({
+        userId: data.user.id,
+        name: input.name,
+        email: input.email,
+        phone: input.phone ?? '',
+      });
+    } catch (err) {
+      // Não bloqueia o fluxo de cadastro se falhar a criação do representante,
+      // mas registra o erro para análise.
+      console.error('Erro ao criar representante pendente:', err);
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    if (!isSupabaseConfigured()) {
+      throw new Error(
+        'Recuperação de senha só está disponível quando o Supabase estiver configurado.'
+      );
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    if (error) throw error;
   };
 
   const logout = async () => {
@@ -102,6 +170,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       value={{
         user,
         login,
+        registerRepresentative,
+        resetPassword,
         logout,
         isAuthenticated: !!user,
         loading,

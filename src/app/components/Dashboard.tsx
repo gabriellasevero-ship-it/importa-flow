@@ -9,6 +9,7 @@ import { useImportadoras, useCategories, useProducts, useCommissions } from '@/h
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
+  mode?: 'admin' | 'representante';
 }
 
 // Mock de representantes (quantidade)
@@ -19,7 +20,7 @@ const mockRepresentatives = [
   { id: '4', status: 'suspended' },
 ];
 
-export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const { user } = useAuth();
   const { orders } = useOrders();
   const { importadoras } = useImportadoras();
@@ -42,6 +43,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       return sum + (order.total * (commission?.percentage || 0) / 100);
     }, 0);
 
+  // Definimos o papel efetivo apenas com base no `mode` vindo da aplicação.
+  // Isso garante que o toggle Representante/Backoffice controle 100% o layout.
+  const effectiveRole: 'admin' | 'representante' = mode ?? 'representante';
+
   // Estatísticas para admin
   const totalImportadoras = importadoras.length;
   const importadorasAtivas = importadoras.filter(i => i.active).length;
@@ -52,7 +57,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const totalPedidos = orders.length;
 
   // Dashboard para Admin
-  if (user?.role === 'admin') {
+  if (effectiveRole === 'admin') {
     return (
       <div className="space-y-6">
         <div>

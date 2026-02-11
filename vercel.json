@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/catalogo/:path*", "destination": "/index.html" },
+    { "source": "/pedido/:path*", "destination": "/index.html" }
+  ]
+}

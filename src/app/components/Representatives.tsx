@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Plus, UserCheck, UserX, Clock, Building2, Mail, Phone, FileText, User, Trash2, Check, ChevronsUpDown } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
@@ -35,68 +35,14 @@ import {
 } from '@/app/components/ui/popover';
 import { toast } from 'sonner';
 import { cn } from '@/app/components/ui/utils';
-
-type RepresentativeStatus = 'active' | 'pending' | 'suspended';
-
-interface Representative {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  cpf: string;
-  cnpj?: string;
-  company?: string;
-  importerId?: string;
-  status: RepresentativeStatus;
-  createdAt: string;
-  totalSales?: number;
-}
-
-const mockRepresentatives: Representative[] = [
-  {
-    id: '1',
-    name: 'Ana Silva',
-    email: 'ana.silva@email.com',
-    phone: '(11) 98765-4321',
-    cpf: '123.456.789-00',
-    cnpj: '12.345.678/0001-90',
-    company: 'AS Representações',
-    status: 'active',
-    createdAt: '2024-01-15',
-    totalSales: 45000,
-  },
-  {
-    id: '2',
-    name: 'Carlos Mendes',
-    email: 'carlos.mendes@email.com',
-    phone: '(21) 99876-5432',
-    cpf: '987.654.321-00',
-    status: 'active',
-    createdAt: '2024-02-10',
-    totalSales: 32000,
-  },
-  {
-    id: '3',
-    name: 'Mariana Costa',
-    email: 'mariana.costa@email.com',
-    phone: '(31) 97654-3210',
-    cpf: '456.789.123-00',
-    cnpj: '98.765.432/0001-10',
-    company: 'MC Vendas',
-    status: 'pending',
-    createdAt: '2024-03-20',
-  },
-  {
-    id: '4',
-    name: 'Roberto Santos',
-    email: 'roberto.santos@email.com',
-    phone: '(41) 96543-2109',
-    cpf: '789.123.456-00',
-    status: 'suspended',
-    createdAt: '2023-11-05',
-    totalSales: 12000,
-  },
-];
+import type { Representative, RepresentativeStatus } from '@/services/representantes';
+import {
+  fetchRepresentatives,
+  createRepresentative,
+  updateRepresentative,
+  updateRepresentativeStatus,
+  deleteRepresentative,
+} from '@/services/representantes';
 
 // Mock de importadoras disponíveis
 const mockImporters = [
@@ -131,7 +77,7 @@ const statusConfig = {
 };
 
 export const Representatives: React.FC = () => {
-  const [representatives, setRepresentatives] = useState<Representative[]>(mockRepresentatives);
+  const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<RepresentativeStatus | 'all'>('all');
   const [showDialog, setShowDialog] = useState(false);
@@ -139,6 +85,8 @@ export const Representatives: React.FC = () => {
   const [editingRepresentative, setEditingRepresentative] = useState<Representative | null>(null);
   const [deletingRepresentative, setDeletingRepresentative] = useState<Representative | null>(null);
   const [openImporterCombobox, setOpenImporterCombobox] = useState(false);
+
+  const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -150,6 +98,23 @@ export const Representatives: React.FC = () => {
     importerId: '',
     status: 'pending' as RepresentativeStatus,
   });
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchRepresentatives();
+        setRepresentatives(data);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível carregar os representantes.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, []);
 
   const handleAdd = () => {
     setEditingRepresentative(null);
@@ -187,31 +152,48 @@ export const Representatives: React.FC = () => {
       return;
     }
 
-    const representativeData: Representative = {
-      id: editingRepresentative?.id || Date.now().toString(),
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone,
-      cpf: formData.cpf,
-      cnpj: formData.cnpj || undefined,
-      company: formData.company || undefined,
-      importerId: formData.importerId || undefined,
-      status: formData.status,
-      createdAt: editingRepresentative?.createdAt || new Date().toISOString().split('T')[0],
-      totalSales: editingRepresentative?.totalSales,
+    const save = async () => {
+      try {
+        setLoading(true);
+        if (editingRepresentative) {
+          const updated = await updateRepresentative(editingRepresentative.id, {
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            cpf: formData.cpf,
+            cnpj: formData.cnpj || undefined,
+            company: formData.company || undefined,
+            importerId: formData.importerId || undefined,
+            status: formData.status,
+          });
+          setRepresentatives((prev) =>
+            prev.map((r) => (r.id === updated.id ? updated : r))
+          );
+          toast.success('Representante atualizado com sucesso!');
+        } else {
+          const created = await createRepresentative({
+            userId: '',
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            cpf: formData.cpf,
+            cnpj: formData.cnpj || undefined,
+            company: formData.company || undefined,
+            importerId: formData.importerId || undefined,
+          });
+          setRepresentatives((prev) => [created, ...prev]);
+          toast.success('Representante cadastrado com sucesso!');
+        }
+        setShowDialog(false);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível salvar o representante.');
+      } finally {
+        setLoading(false);
+      }
     };
 
-    if (editingRepresentative) {
-      setRepresentatives(
-        representatives.map((r) => (r.id === editingRepresentative.id ? representativeData : r))
-      );
-      toast.success('Representante atualizado com sucesso!');
-    } else {
-      setRepresentatives([...representatives, representativeData]);
-      toast.success('Representante cadastrado com sucesso!');
-    }
-
-    setShowDialog(false);
+    void save();
   };
 
   const confirmDelete = (representative: Representative) => {
@@ -220,20 +202,50 @@ export const Representatives: React.FC = () => {
   };
 
   const handleDelete = () => {
-    if (!editingRepresentative) return;
-    setRepresentatives(representatives.filter((r) => r.id !== editingRepresentative.id));
-    toast.success('Representante excluído com sucesso!');
-    setShowDialog(false);
-    setShowDeleteDialog(false);
-    setEditingRepresentative(null);
+    if (!deletingRepresentative) return;
+
+    const run = async () => {
+      try {
+        setLoading(true);
+        await deleteRepresentative(deletingRepresentative.id);
+        setRepresentatives((prev) =>
+          prev.filter((r) => r.id !== deletingRepresentative.id)
+        );
+        toast.success('Representante excluído com sucesso!');
+        setShowDialog(false);
+        setShowDeleteDialog(false);
+        setEditingRepresentative(null);
+        setDeletingRepresentative(null);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível excluir o representante.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
   };
 
   const handleStatusChange = (id: string, newStatus: RepresentativeStatus) => {
-    setRepresentatives(
-      representatives.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
-    );
-    const statusLabel = statusConfig[newStatus].label;
-    toast.success(`Status alterado para ${statusLabel}`);
+    const run = async () => {
+      try {
+        setLoading(true);
+        const updated = await updateRepresentativeStatus(id, newStatus);
+        setRepresentatives((prev) =>
+          prev.map((r) => (r.id === updated.id ? updated : r))
+        );
+        const statusLabel = statusConfig[newStatus].label;
+        toast.success(`Status alterado para ${statusLabel}`);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível alterar o status.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
   };
 
   const filteredRepresentatives = representatives.filter((rep) => {
@@ -330,7 +342,19 @@ export const Representatives: React.FC = () => {
       </div>
 
       {/* Representatives List */}
-      {filteredRepresentatives.length > 0 ? (
+      {loading && representatives.length === 0 && (
+        <Card className="p-12">
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+              <User className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <p className="text-muted-foreground">
+              Carregando representantes...
+            </p>
+          </div>
+        </Card>
+      )}
+      {!loading && filteredRepresentatives.length > 0 ? (
         <div className="grid grid-cols-1 gap-4">
           {filteredRepresentatives.map((rep) => {
             const StatusIcon = statusConfig[rep.status].icon;
@@ -439,7 +463,7 @@ export const Representatives: React.FC = () => {
             );
           })}
         </div>
-      ) : (
+      ) : !loading ? (
         <Card className="p-12">
           <div className="text-center space-y-3">
             <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
@@ -459,7 +483,7 @@ export const Representatives: React.FC = () => {
             )}
           </div>
         </Card>
-      )}
+      ) : null}
 
       {/* Dialog de Adicionar/Editar */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
