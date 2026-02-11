@@ -110,6 +110,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     await Promise.race([loadUser(data.user.id), profileTimeout]);
   };
 
+  const REGISTER_FULL_TIMEOUT_MS = 22000;
+
   const registerRepresentative = async (input: {
     name: string;
     email: string;
@@ -122,26 +124,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       );
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email: input.email,
-      password: input.password,
-    });
-    if (error) throw error;
-    if (!data.user) return;
+    const run = async () => {
+      const { data, error } = await supabase.auth.signUp({
+        email: input.email,
+        password: input.password,
+      });
+      if (error) throw error;
+      if (!data.user) return;
 
-    try {
-      // Cria o registro na tabela de representantes como "pendente"
+      if (!data.session) {
+        throw new Error(
+          'Cadastro criado. Confirme seu e-mail pelo link enviado e depois faça login.'
+        );
+      }
+
       await createRepresentative({
         userId: data.user.id,
         name: input.name,
         email: input.email,
         phone: input.phone ?? '',
       });
-    } catch (err) {
-      // Não bloqueia o fluxo de cadastro se falhar a criação do representante,
-      // mas registra o erro para análise.
-      console.error('Erro ao criar representante pendente:', err);
-    }
+    };
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              'A requisição demorou muito. Verifique sua conexão, tente de novo ou use outro e-mail. Se a conta foi criada, tente fazer login.'
+            )
+          ),
+        REGISTER_FULL_TIMEOUT_MS
+      );
+    });
+
+    await Promise.race([run(), timeoutPromise]);
   };
 
   const resetPassword = async (email: string) => {
