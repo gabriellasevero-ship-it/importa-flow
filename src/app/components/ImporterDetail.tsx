@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { extractTextFromPdf } from '@/lib/pdfUtils';
+import { parseCatalogText } from '@/lib/catalogParser';
 import { useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
 import type { Product as ApiProduct } from '@/types';
@@ -101,6 +103,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [catalogProcessing, setCatalogProcessing] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   
   // Estados Financeiros (novas importadoras vêm com plano free e pagamento em dia)
@@ -245,17 +249,48 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         return;
       }
       setUploadedFileName(file.name);
-      // Aqui você implementaria o processamento do PDF
-      // Por enquanto, vamos simular o upload
-      toast.success('Catálogo enviado! Processamento iniciado...');
+      setUploadedFile(file);
+      toast.success('Arquivo selecionado. Clique em Processar Catálogo.');
     }
+    event.target.value = '';
   };
 
-  const handleProcessCatalog = () => {
-    // Simular processamento do PDF
-    toast.success('Catálogo processado com sucesso! 2 produtos adicionados.');
-    setShowCatalogUploadDialog(false);
-    setUploadedFileName(null);
+  const handleProcessCatalog = async () => {
+    if (!uploadedFile) return;
+    setCatalogProcessing(true);
+    try {
+      const text = await extractTextFromPdf(uploadedFile);
+      const items = parseCatalogText(text);
+      if (items.length === 0) {
+        toast.warning('Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.');
+        return;
+      }
+      let created = 0;
+      for (const item of items) {
+        await productsApi.createProduct({
+          importadoraId: importer.id,
+          code: item.code,
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          minOrder: item.minOrder,
+          material: item.material || undefined,
+          dimensions: item.dimensions || undefined,
+          active: true,
+        });
+        created++;
+      }
+      await refetchProducts();
+      setShowCatalogUploadDialog(false);
+      setUploadedFileName(null);
+      setUploadedFile(null);
+      toast.success(`Catálogo processado: ${created} produto(s) adicionado(s).`);
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível processar o catálogo. Tente novamente ou adicione produtos manualmente.');
+    } finally {
+      setCatalogProcessing(false);
+    }
   };
 
   const handleImageZoom = (image: string) => {
@@ -812,7 +847,10 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setUploadedFileName(null)}
+                    onClick={() => {
+                      setUploadedFileName(null);
+                      setUploadedFile(null);
+                    }}
                   >
                     <X className="w-4 h-4 mr-1" />
                     Remover
@@ -855,17 +893,23 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               onClick={() => {
                 setShowCatalogUploadDialog(false);
                 setUploadedFileName(null);
+                setUploadedFile(null);
               }}
+              disabled={catalogProcessing}
             >
               Cancelar
             </Button>
             <Button
               onClick={handleProcessCatalog}
-              disabled={!uploadedFileName}
+              disabled={!uploadedFile || catalogProcessing}
               className="bg-primary hover:bg-primary/90"
             >
-              <Upload className="w-4 h-4 mr-2" />
-              Processar Catálogo
+              {catalogProcessing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2" />
+              )}
+              {catalogProcessing ? 'Processando...' : 'Processar Catálogo'}
             </Button>
           </DialogFooter>
         </DialogContent>
