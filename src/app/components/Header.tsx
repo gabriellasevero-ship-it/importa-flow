@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
         onClick={() => onViewModeChange('representante')}
         variant="ghost"
         size="sm"
-        className={`rounded-none text-primary-foreground hover:bg-white/10 ${
+        className={`flex-1 min-w-0 rounded-none text-primary-foreground hover:bg-white/10 ${
           viewMode === 'representante' ? 'bg-white/15' : ''
         }`}
         title="Ambiente do representante"
@@ -41,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
         onClick={() => onViewModeChange('admin')}
         variant="ghost"
         size="sm"
-        className={`rounded-none text-primary-foreground hover:bg-white/10 ${
+        className={`flex-1 min-w-0 rounded-none text-primary-foreground hover:bg-white/10 ${
           viewMode === 'admin' ? 'bg-white/15' : ''
         }`}
         title="Backoffice"
@@ -86,9 +86,9 @@ export const Header: React.FC<HeaderProps> = ({
               )}
               {user && (
                 <>
-                  <div className="hidden md:flex items-center gap-2 bg-white/10 px-3 py-2 rounded-lg">
-                    <User className="w-4 h-4" />
-                    <span className="text-sm">{user.name}</span>
+                  <div className="hidden md:flex items-center gap-2 text-primary-foreground/70 px-2 py-1.5">
+                    <User className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-normal">{user.name}</span>
                   </div>
                   <Button
                     onClick={logout}

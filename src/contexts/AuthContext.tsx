@@ -20,6 +20,21 @@ interface AuthContextType {
   loading: boolean;
 }
 
+/** Traduz mensagens comuns do Supabase Auth para o usuário */
+function normalizeAuthError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes('invalid login credentials') || lower.includes('invalid_credentials')) {
+    return 'E-mail ou senha incorretos. Tente novamente.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';
+  }
+  if (lower.includes('network') || lower.includes('fetch')) {
+    return 'Erro de conexão. Verifique a internet e se a URL do backend está correta em produção.';
+  }
+  return message;
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = () => {
@@ -93,7 +108,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return;
     }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    if (error) {
+      throw new Error(normalizeAuthError(error.message));
+    }
     if (!data.user) return;
 
     const profileTimeout = new Promise<never>((_, reject) => {
@@ -107,7 +124,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         PROFILE_TIMEOUT_MS
       );
     });
-    await Promise.race([loadUser(data.user.id), profileTimeout]);
+
+    try {
+      await Promise.race([loadUser(data.user.id), profileTimeout]);
+    } catch (profileErr) {
+      await supabase.auth.signOut();
+      const msg =
+        profileErr instanceof Error
+          ? profileErr.message
+          : 'Não foi possível carregar seu perfil.';
+      throw new Error(
+        msg.includes('Perfil não encontrado') || msg.includes('demorou')
+          ? msg
+          : 'Seu usuário não possui perfil no sistema. Entre em contato com o administrador ou confira a documentação em docs/DEBUG_PROFILES.md.'
+      );
+    }
   };
 
   const REGISTER_FULL_TIMEOUT_MS = 22000;

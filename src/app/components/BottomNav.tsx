@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Package, ShoppingCart, Users, FileText, TrendingUp, Settings, Building2, Truck } from 'lucide-react';
+import { Home, Package, ShoppingCart, Users, FileText, TrendingUp, Settings, Building2, Truck, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { useCart } from '@/contexts/CartContext';
@@ -17,8 +17,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange, us
   const representanteItems = [
     { id: 'home', icon: Home, label: 'Início' },
     { id: 'catalog', icon: Package, label: 'Catálogo' },
-    { id: 'clients', icon: Users, label: 'Clientes' },
     { id: 'orders', icon: FileText, label: 'Pedidos' },
+    { id: 'clients', icon: Users, label: 'Clientes' },
     { id: 'transportadoras', icon: Truck, label: 'Transportadoras' },
   ];
 
@@ -30,10 +30,16 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange, us
 
   const items = userRole === 'admin' ? menuItems : representanteItems;
 
+  const hasExtraItems = items.length > 4;
+  const baseVisibleItems = hasExtraItems ? items.slice(0, 3) : items;
+  const itemsToRender = hasExtraItems
+    ? [...baseVisibleItems, { id: 'more', icon: MoreHorizontal, label: 'Mais' }]
+    : baseVisibleItems;
+
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-border shadow-lg z-50">
-      <div className="flex items-center justify-around">
-        {items.map((item) => {
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-border shadow-lg z-50 pt-4 pb-[calc(16px+env(safe-area-inset-bottom))]">
+      <div className="flex items-stretch justify-around min-h-14">
+        {itemsToRender.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           
@@ -42,7 +48,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange, us
               key={item.id}
               onClick={() => onTabChange(item.id)}
               variant="ghost"
-              className={`flex-1 flex flex-col items-center gap-1 py-3 rounded-none relative ${
+              className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 rounded-none relative min-h-full w-full h-full ${
                 isActive ? 'text-primary' : 'text-muted-foreground'
               }`}
             >

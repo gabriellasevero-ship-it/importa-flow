@@ -23,6 +23,7 @@ import { Representatives } from '@/app/components/Representatives';
 import { Transportadoras } from '@/app/components/Transportadoras';
 import { Product } from '@/types';
 import { Sidebar } from '@/app/components/Sidebar';
+import { MoreMenu } from '@/app/components/MoreMenu';
 
 function ClientCatalogEntry({ linkId, representanteId }: { linkId: string; representanteId: string }) {
   const { addCliente } = useCatalogClients();
@@ -96,7 +97,28 @@ function AppContent() {
     return <Login />;
   }
 
+  const getMoreMenuItems = () => {
+    if (displayAsAdmin) {
+      return [];
+    }
+
+    // Itens extras do menu inferior para representante (Clientes e Transportadoras).
+    return [
+      { id: 'clients', label: 'Clientes' },
+      { id: 'transportadoras', label: 'Transportadoras' },
+    ];
+  };
+
   const renderContent = () => {
+    if (activeTab === 'more' && !displayAsAdmin) {
+      return (
+        <MoreMenu
+          items={getMoreMenuItems()}
+          onSelect={(tabId) => setActiveTab(tabId)}
+        />
+      );
+    }
+
     if (displayAsAdmin) {
       switch (activeTab) {
         case 'home':
@@ -129,6 +151,10 @@ function AppContent() {
   };
 
   const getPageTitle = () => {
+    if (activeTab === 'more' && !displayAsAdmin) {
+      return 'Mais opções';
+    }
+
     if (displayAsAdmin) {
       switch (activeTab) {
         case 'home':

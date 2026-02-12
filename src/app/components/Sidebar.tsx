@@ -77,12 +77,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, userRo
           className={`w-full ${isExpanded ? 'justify-start gap-3' : 'justify-center px-0'} h-10 text-primary-foreground/80 hover:bg-white/5 hover:text-white`}
         >
           {isExpanded ? (
-            <ChevronRight className="w-5 h-5" />
-          ) : (
             <>
-              <ChevronLeft className="w-5 h-5" />
+              <ChevronRight className="w-5 h-5 flex-shrink-0" />
               <span className="text-sm">Minimizar</span>
             </>
+          ) : (
+            <ChevronLeft className="w-5 h-5" />
           )}
         </Button>
       </div>

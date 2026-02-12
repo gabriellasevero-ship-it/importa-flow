@@ -133,3 +133,43 @@ VALUES (
 
 - Use `'pending'` em vez de `'active'` se quiser que apareça como “Pendente” para o admin aprovar.
 - Depois de rodar, a pessoa deve aparecer na lista **Representantes** do backoffice.
+
+---
+
+## 5. Login não funciona em produção (com nenhum perfil)
+
+Se o login funciona em desenvolvimento mas **em produção nenhum perfil consegue entrar**, confira na ordem:
+
+### 5.1 Variáveis de ambiente no deploy
+
+No **Vercel** (ou outro host): **Settings** → **Environment Variables**.
+
+- Defina **VITE_SUPABASE_URL** e **VITE_SUPABASE_ANON_KEY** com os valores do **mesmo** projeto Supabase que você usa (Dashboard → Settings → API).
+- Importante: no Vite, variáveis `VITE_*` são embutidas no build. Depois de alterar as variáveis, faça um **novo deploy** (Redeploy) para o build passar a usá-las.
+
+Se essas variáveis não estiverem definidas no ambiente de produção no momento do build, o app pode estar usando URL/chave de fallback e o login real não funciona.
+
+### 5.2 URL do site no Supabase
+
+No **Supabase** → **Authentication** → **URL Configuration**:
+
+- **Site URL**: deve ser a URL do app em produção (ex.: `https://seu-app.vercel.app`).
+- **Redirect URLs**: inclua a mesma URL de produção (e, se quiser, a de desenvolvimento).
+
+### 5.3 Perfis no banco de produção
+
+Se o projeto Supabase em produção for **diferente** do de desenvolvimento:
+
+- Os usuários que existem em **Auth** precisam ter linha correspondente em **profiles** (veja passos 1 e 2 acima).
+- Confirme que as migrations (schema, RLS, trigger `on_auth_user_created`) foram aplicadas nesse projeto, para novos cadastros ganharem perfil automaticamente.
+
+### 5.4 Mensagem de erro na tela
+
+Ao tentar login em produção, anote a **mensagem em vermelho** que aparece:
+
+- **"E-mail ou senha incorretos"** → Auth ok; credenciais erradas ou usuário não existe nesse projeto Supabase.
+- **"Perfil não encontrado" / "Seu usuário não possui perfil no sistema"** → Login no Auth funcionou, mas não existe linha em `profiles` para esse usuário (rode o SQL do passo 2 para o projeto de produção).
+- **"Erro de conexão"** → App não está conseguindo falar com o Supabase (URL errada, CORS ou rede).
+- **"Confirme seu e-mail"** → Ative o usuário no Supabase (Authentication → Users) ou desative "Confirm email" no provider.
+
+Com isso é possível identificar se o problema é ambiente (variáveis/URL), Auth ou falta de perfil.

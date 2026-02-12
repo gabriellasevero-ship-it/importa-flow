@@ -1,13 +1,19 @@
 import { supabase } from '@/lib/supabase';
 import { mapProfile } from './mappers';
 
+/** Código do Supabase/PostgREST quando .single() não encontra nenhuma linha */
+const PGRST_NO_ROWS = 'PGRST116';
+
 export async function getProfile(userId: string) {
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', userId)
     .single();
-  if (error) throw error;
+  if (error) {
+    if (error.code === PGRST_NO_ROWS) return null;
+    throw error;
+  }
   return data ? mapProfile(data) : null;
 }
 
