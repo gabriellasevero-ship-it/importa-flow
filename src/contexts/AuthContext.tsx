@@ -101,9 +101,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     if (!isSupabaseConfigured()) {
       setUser({
         id: 'demo',
-        name: 'Usuário Demo',
-        email,
-        role: 'representante',
+        name: 'Admin Demo',
+        email: email || 'admin@demo.local',
+        role: 'admin',
       });
       return;
     }

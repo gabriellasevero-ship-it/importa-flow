@@ -7,6 +7,7 @@ import * as clientesApi from '@/services/clientes';
 import * as transportadorasApi from '@/services/transportadoras';
 import * as commissionsApi from '@/services/commissions';
 import * as notificationsApi from '@/services/notifications';
+import * as representantesApi from '@/services/representantes';
 import type { Importadora, Category, Product, Cliente, Transportadora, Commission } from '@/types';
 
 export function useImportadoras() {
@@ -145,6 +146,27 @@ export function useCommissions() {
     refetch();
   }, [refetch]);
   return { commissions: list, loading, refetch };
+}
+
+export function useRepresentatives() {
+  const [list, setList] = useState<representantesApi.Representative[]>([]);
+  const [loading, setLoading] = useState(true);
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await representantesApi.fetchRepresentatives();
+      setList(data);
+    } catch (e) {
+      console.error(e);
+      setList([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+  return { representatives: list, loading, refetch };
 }
 
 export function useNotifications() {

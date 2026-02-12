@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export type RepresentativeStatus = 'active' | 'pending' | 'suspended';
 
@@ -49,7 +49,23 @@ function mapRepresentative(row: DbRepresentative): Representative {
   };
 }
 
+const DEMO_REPRESENTATIVES: Representative[] = [
+  {
+    id: 'demo-rep-1',
+    userId: 'demo-user-1',
+    name: 'Representante Demo',
+    email: 'representante@demo.local',
+    phone: '(11) 98765-4321',
+    cpf: '123.456.789-00',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  },
+];
+
 export async function fetchRepresentatives(): Promise<Representative[]> {
+  if (!isSupabaseConfigured()) {
+    return [...DEMO_REPRESENTATIVES];
+  }
   const { data, error } = await supabase
     .from('representantes')
     .select('*')

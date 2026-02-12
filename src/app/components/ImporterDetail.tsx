@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
+import { useProducts, useRepresentatives } from '@/hooks/useData';
+import * as productsApi from '@/services/products';
+import type { Product as ApiProduct } from '@/types';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
@@ -57,61 +60,21 @@ interface ImporterDetailProps {
   onDelete?: (importerId: string) => void;
 }
 
-// Mock products baseado no exemplo do catálogo Akash
-const mockProducts: Product[] = [
-  {
-    id: '1',
-    code: 'CRS-2625',
-    name: 'Garfo de Mesa',
-    category: 'Madras',
-    price: 8.75,
-    quantityPerBox: 100,
-    material: 'Madeira e metal',
-    unitsPerPackage: 6,
-    dimensions: '27x8 cm',
-    image: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=400',
-    published: true,
-  },
-  {
-    id: '2',
-    code: 'CRS-2626',
-    name: 'Faca de Mesa',
-    category: 'Madras',
-    price: 8.75,
-    quantityPerBox: 100,
-    material: 'Madeira e metal',
-    unitsPerPackage: 6,
-    dimensions: '26x8 cm',
-    image: 'https://images.unsplash.com/photo-1606676539940-12768ce0e762?w=400',
-    published: true,
-  },
-  {
-    id: '3',
-    code: 'CRS-2627',
-    name: 'Colher de Mesa',
-    category: 'Madras',
-    price: 8.50,
-    quantityPerBox: 100,
-    material: 'Madeira e metal',
-    unitsPerPackage: 6,
-    dimensions: '25x7 cm',
-    image: 'https://images.unsplash.com/photo-1565699894576-1710004524ba?w=400',
-    published: false,
-  },
-  {
-    id: '4',
-    code: 'CRS-2628',
-    name: 'Jogo de Talheres Completo',
-    category: 'Madras',
-    price: 32.00,
-    quantityPerBox: 50,
-    material: 'Madeira e metal premium',
-    unitsPerPackage: 4,
-    dimensions: '30x10 cm',
-    image: 'https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=400',
-    published: true,
-  },
-];
+function apiProductToLocal(p: ApiProduct): Product {
+  return {
+    id: p.id,
+    code: p.code,
+    name: p.name,
+    category: p.category,
+    price: p.price,
+    quantityPerBox: p.minOrder,
+    material: p.material ?? '',
+    unitsPerPackage: 0,
+    dimensions: p.dimensions ?? '',
+    image: p.image,
+    published: p.active,
+  };
+}
 
 export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   importer: initialImporter,
@@ -120,7 +83,14 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   onDelete,
 }) => {
   const [importer, setImporter] = useState(initialImporter);
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const { products: apiProducts, loading: productsLoading, refetch: refetchProducts } = useProducts({
+    importadoraId: importer.id,
+  });
+  const { representatives } = useRepresentatives();
+  const products = apiProducts.map(apiProductToLocal);
+  const linkedRepresentatives = representatives
+    .filter((r) => r.importerId === importer.id)
+    .map((r) => ({ id: r.id, name: r.name, email: r.email, status: r.status }));
   const [activeTab, setActiveTab] = useState('info');
   const [showProductDialog, setShowProductDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -133,20 +103,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   
-  // Estados Financeiros
+  // Estados Financeiros (novas importadoras vêm com plano free e pagamento em dia)
   const [financialData, setFinancialData] = useState({
-    plan: 'pro' as 'free' | 'basic' | 'pro',
-    maxRepresentatives: '10',
-    maxProcessesPerMonth: '100',
+    plan: 'free' as 'free' | 'basic' | 'pro',
+    maxRepresentatives: '3',
+    maxProcessesPerMonth: '20',
     paymentStatus: 'paid' as 'paid' | 'overdue',
   });
-
-  // Mock de representantes vinculadas
-  const linkedRepresentatives = [
-    { id: '1', name: 'Ana Silva', email: 'ana.silva@email.com', status: 'active' },
-    { id: '2', name: 'Carlos Mendes', email: 'carlos.mendes@email.com', status: 'active' },
-    { id: '3', name: 'Mariana Costa', email: 'mariana.costa@email.com', status: 'pending' },
-  ];
 
   const [formData, setFormData] = useState({
     name: importer.name,
@@ -212,34 +175,47 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     setShowProductDialog(true);
   };
 
-  const handleSaveProduct = () => {
+  const handleSaveProduct = async () => {
     if (!productFormData.code || !productFormData.name || !productFormData.price) {
       toast.error('Preencha os campos obrigatórios');
       return;
     }
 
-    const productData: Product = {
-      id: editingProduct?.id || Date.now().toString(),
-      code: productFormData.code,
-      name: productFormData.name,
-      category: productFormData.category,
-      price: parseFloat(productFormData.price),
-      quantityPerBox: parseInt(productFormData.quantityPerBox) || 0,
-      material: productFormData.material,
-      unitsPerPackage: parseInt(productFormData.unitsPerPackage) || 0,
-      dimensions: productFormData.dimensions,
-      published: productFormData.published,
-    };
+    const price = parseFloat(productFormData.price);
+    const minOrder = parseInt(productFormData.quantityPerBox, 10) || 1;
 
-    if (editingProduct) {
-      setProducts(products.map((p) => (p.id === editingProduct.id ? productData : p)));
-      toast.success('Produto atualizado com sucesso!');
-    } else {
-      setProducts([...products, productData]);
-      toast.success('Produto adicionado com sucesso!');
+    try {
+      if (editingProduct) {
+        await productsApi.updateProduct(editingProduct.id, {
+          name: productFormData.name,
+          category: productFormData.category,
+          price,
+          minOrder,
+          material: productFormData.material || undefined,
+          dimensions: productFormData.dimensions || undefined,
+          active: productFormData.published,
+        });
+        toast.success('Produto atualizado com sucesso!');
+      } else {
+        await productsApi.createProduct({
+          importadoraId: importer.id,
+          code: productFormData.code,
+          name: productFormData.name,
+          category: productFormData.category,
+          price,
+          minOrder,
+          material: productFormData.material || undefined,
+          dimensions: productFormData.dimensions || undefined,
+          active: productFormData.published,
+        });
+        toast.success('Produto adicionado com sucesso!');
+      }
+      await refetchProducts();
+      setShowProductDialog(false);
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível salvar o produto.');
     }
-
-    setShowProductDialog(false);
   };
 
   const confirmDeleteProduct = (product: Product) => {
@@ -247,12 +223,18 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     setShowDeleteDialog(true);
   };
 
-  const handleDeleteProduct = () => {
+  const handleDeleteProduct = async () => {
     if (!deletingProduct) return;
-    setProducts(products.filter((p) => p.id !== deletingProduct.id));
-    toast.success('Produto excluído com sucesso!');
-    setShowDeleteDialog(false);
-    setDeletingProduct(null);
+    try {
+      await productsApi.deleteProduct(deletingProduct.id);
+      toast.success('Produto excluído com sucesso!');
+      setShowDeleteDialog(false);
+      setDeletingProduct(null);
+      await refetchProducts();
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir o produto.');
+    }
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -295,8 +277,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const filteredProducts = products.filter((product) =>
     product.code.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
     product.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.category.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.material.toLowerCase().includes(productSearchTerm.toLowerCase())
+    (product.category || '').toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+    (product.material || '').toLowerCase().includes(productSearchTerm.toLowerCase())
   );
 
   return (
@@ -448,7 +430,16 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           )}
 
           {/* Lista de Produtos */}
-          {filteredProducts.length > 0 ? (
+          {productsLoading && products.length === 0 ? (
+            <Card className="p-12">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+                  <Package className="w-8 h-8 text-muted-foreground animate-pulse" />
+                </div>
+                <p className="text-muted-foreground">Carregando produtos...</p>
+              </div>
+            </Card>
+          ) : filteredProducts.length > 0 ? (
             <div className="space-y-3">
               {filteredProducts.map((product) => (
                 <Card key={product.id} className="hover:shadow-md transition-shadow">
