@@ -33,8 +33,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, userRo
 
   const items = userRole === 'admin' ? adminItems : representanteItems;
 
+  const isExpanded = !isCollapsed;
+
   return (
-    <aside className={`hidden md:flex flex-col ${isCollapsed ? 'w-16' : 'w-64'} bg-primary text-primary-foreground h-[calc(100vh-73px)] sticky top-[73px] border-r border-primary-foreground/10 transition-all duration-300`}>
+    <aside
+      className={`hidden md:flex flex-col ${isExpanded ? 'w-64' : 'w-16'} bg-primary text-primary-foreground h-[calc(100vh-73px)] sticky top-[73px] border-r border-primary-foreground/10 transition-all duration-300`}
+      onMouseEnter={() => setIsCollapsed(false)}
+      onMouseLeave={() => setIsCollapsed(true)}
+    >
       <nav className="flex-1 p-2 space-y-2">
         {items.map((item) => {
           const Icon = item.icon;
@@ -45,16 +51,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, userRo
               key={item.id}
               onClick={() => onTabChange(item.id)}
               variant="ghost"
-              className={`w-full ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} h-12 ${
+              className={`w-full ${isExpanded ? 'justify-start gap-3' : 'justify-center px-0'} h-12 ${
                 isActive
                   ? 'bg-white/10 text-white hover:bg-white/15'
                   : 'text-primary-foreground/80 hover:bg-white/5 hover:text-white'
               }`}
-              title={isCollapsed ? item.label : undefined}
+              title={isExpanded ? undefined : item.label}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
-              {!isCollapsed && <span>{item.label}</span>}
-              {!isCollapsed && item.badge && (
+              {isExpanded && <span>{item.label}</span>}
+              {isExpanded && item.badge && (
                 <Badge className="ml-auto bg-secondary text-secondary-foreground">
                   {item.badge}
                 </Badge>
@@ -68,9 +74,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, userRo
         <Button
           onClick={() => setIsCollapsed(!isCollapsed)}
           variant="ghost"
-          className={`w-full ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} h-10 text-primary-foreground/80 hover:bg-white/5 hover:text-white`}
+          className={`w-full ${isExpanded ? 'justify-start gap-3' : 'justify-center px-0'} h-10 text-primary-foreground/80 hover:bg-white/5 hover:text-white`}
         >
-          {isCollapsed ? (
+          {isExpanded ? (
             <ChevronRight className="w-5 h-5" />
           ) : (
             <>
