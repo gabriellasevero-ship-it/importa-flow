@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
-import { getProfile } from '@/services/profile';
+import { getProfile, ensureProfile } from '@/services/profile';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { createRepresentative } from '@/services/representantes';
 
@@ -137,6 +137,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           'Cadastro criado. Confirme seu e-mail pelo link enviado e depois faça login.'
         );
       }
+
+      // Cria perfil em profiles para o login funcionar (id, name, email, role representante).
+      await ensureProfile(data.user.id, input.name, input.email);
 
       await createRepresentative({
         userId: data.user.id,

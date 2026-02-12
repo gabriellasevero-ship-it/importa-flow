@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Building2, Package, Calendar, MoreVertical, Pencil, Trash2, Search, AlertCircle, Eye } from 'lucide-react';
+import { Plus, Building2, Package, Calendar, Search, AlertCircle, Eye } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import {
@@ -10,17 +10,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/app/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/app/components/ui/dropdown-menu';
 import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import { Switch } from '@/app/components/ui/switch';
 import { toast } from 'sonner';
 import { ImporterDetail } from '@/app/components/ImporterDetail';
+import { useImportadoras, useProducts } from '@/hooks/useData';
+import {
+  createImportadora,
+  updateImportadora,
+  deleteImportadora,
+} from '@/services/importadoras';
+import type { Importadora } from '@/types';
 
-interface Importer {
+/** Formato esperado pelo ImporterDetail (compatível com dados reais + campos opcionais) */
+interface ImporterView {
   id: string;
   name: string;
   productsCount: number;
@@ -30,200 +34,186 @@ interface Importer {
   cnpj?: string;
 }
 
-// Mock data
-const mockImporters: Importer[] = [
-  {
-    id: '1',
-    name: 'Importadora Global Mix',
-    productsCount: 1247,
-    lastUpdate: '2025-01-15',
-    contactEmail: 'contato@globalmix.com.br',
-    contactPhone: '(11) 98765-4321',
-    cnpj: '12.345.678/0001-90',
-  },
-  {
-    id: '2',
-    name: 'Brasil Import Trading',
-    productsCount: 892,
-    lastUpdate: '2025-01-10',
-    contactEmail: 'vendas@brasilimport.com.br',
-    contactPhone: '(21) 97654-3210',
-    cnpj: '23.456.789/0001-81',
-  },
-  {
-    id: '3',
-    name: 'Mega Importações LTDA',
-    productsCount: 2103,
-    lastUpdate: '2025-01-18',
-    contactEmail: 'comercial@megaimport.com.br',
-    contactPhone: '(11) 99876-5432',
-    cnpj: '34.567.890/0001-72',
-  },
-  {
-    id: '4',
-    name: 'Internacional Express',
-    productsCount: 567,
-    lastUpdate: '2025-01-12',
-    contactEmail: 'info@intexpress.com.br',
-    contactPhone: '(41) 98765-1234',
-    cnpj: '45.678.901/0001-63',
-  },
-];
+function toImporterView(imp: Importadora, productsCount: number): ImporterView {
+  return {
+    id: imp.id,
+    name: imp.name,
+    productsCount,
+    lastUpdate: imp.createdAt.toISOString().split('T')[0],
+    contactEmail: '',
+    contactPhone: '',
+    cnpj: imp.cnpj,
+  };
+}
 
 export const Importers: React.FC = () => {
-  const [importers, setImporters] = useState<Importer[]>(mockImporters);
+  const { importadoras, loading, refetch } = useImportadoras();
+  const { products } = useProducts();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [editingImporter, setEditingImporter] = useState<Importer | null>(null);
-  const [deletingImporter, setDeletingImporter] = useState<Importer | null>(null);
-  const [viewingImporter, setViewingImporter] = useState<Importer | null>(null);
+  const [editingImporter, setEditingImporter] = useState<Importadora | null>(null);
+  const [deletingImporter, setDeletingImporter] = useState<ImporterView | null>(null);
+  const [viewingImporter, setViewingImporter] = useState<ImporterView | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
     name: '',
-    contactEmail: '',
-    contactPhone: '',
     cnpj: '',
+    active: true,
   });
-  const [errors, setErrors] = useState({
-    name: '',
-    contactEmail: '',
-    contactPhone: '',
-    cnpj: '',
-  });
+  const [errors, setErrors] = useState({ name: '', cnpj: '' });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const validateEmail = (email: string) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
+  const getProductsCount = (importadoraId: string) =>
+    products.filter((p) => p.importadoraId === importadoraId).length;
+
+  const importersView: ImporterView[] = importadoras.map((imp) =>
+    toImporterView(imp, getProductsCount(imp.id))
+  );
 
   const validateForm = () => {
-    const newErrors = {
-      name: '',
-      contactEmail: '',
-      contactPhone: '',
-      cnpj: '',
-    };
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Nome é obrigatório';
-    }
-
-    if (!formData.contactEmail.trim()) {
-      newErrors.contactEmail = 'Email é obrigatório';
-    } else if (!validateEmail(formData.contactEmail)) {
-      newErrors.contactEmail = 'Email inválido';
-    }
-
-    if (!formData.contactPhone.trim()) {
-      newErrors.contactPhone = 'Telefone é obrigatório';
-    }
-
+    const newErrors = { name: '', cnpj: '' };
+    if (!formData.name.trim()) newErrors.name = 'Nome é obrigatório';
+    if (!formData.cnpj.trim()) newErrors.cnpj = 'CNPJ é obrigatório';
     setErrors(newErrors);
-    return !Object.values(newErrors).some((error) => error !== '');
+    return !Object.values(newErrors).some((e) => e !== '');
   };
 
-  const handleAddImporter = () => {
+  const handleAddImporter = async () => {
     if (!validateForm()) return;
-
-    const newImporter: Importer = {
-      id: Date.now().toString(),
-      name: formData.name,
-      productsCount: 0,
-      lastUpdate: new Date().toISOString().split('T')[0],
-      contactEmail: formData.contactEmail,
-      contactPhone: formData.contactPhone,
-      cnpj: formData.cnpj,
-    };
-
-    setImporters([...importers, newImporter]);
-    toast.success('Importadora adicionada com sucesso!');
-    closeDialog();
+    setSaving(true);
+    try {
+      await createImportadora({
+        name: formData.name.trim(),
+        cnpj: formData.cnpj.trim(),
+        active: formData.active,
+      });
+      await refetch();
+      toast.success('Importadora adicionada com sucesso!');
+      closeDialog();
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível adicionar a importadora.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleEditImporter = (importer: Importer) => {
-    setEditingImporter(importer);
+  const handleEditImporter = (importer: ImporterView) => {
+    const imp = importadoras.find((i) => i.id === importer.id);
+    if (!imp) return;
+    setEditingImporter(imp);
     setFormData({
-      name: importer.name,
-      contactEmail: importer.contactEmail,
-      contactPhone: importer.contactPhone,
-      cnpj: importer.cnpj || '',
+      name: imp.name,
+      cnpj: imp.cnpj,
+      active: imp.active,
     });
     setShowAddDialog(true);
   };
 
-  const handleUpdateImporter = () => {
+  const handleUpdateImporter = async () => {
     if (!validateForm() || !editingImporter) return;
-
-    setImporters(
-      importers.map((imp) =>
-        imp.id === editingImporter.id
-          ? {
-              ...imp,
-              name: formData.name,
-              contactEmail: formData.contactEmail,
-              contactPhone: formData.contactPhone,
-              cnpj: formData.cnpj,
-            }
-          : imp
-      )
-    );
-
-    toast.success('Importadora atualizada com sucesso!');
-    closeDialog();
+    setSaving(true);
+    try {
+      await updateImportadora(editingImporter.id, {
+        name: formData.name.trim(),
+        cnpj: formData.cnpj.trim(),
+        active: formData.active,
+      });
+      await refetch();
+      toast.success('Importadora atualizada com sucesso!');
+      closeDialog();
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível atualizar a importadora.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const confirmDeleteImporter = (importer: Importer) => {
+  const confirmDeleteImporter = (importer: ImporterView) => {
     setDeletingImporter(importer);
     setShowDeleteDialog(true);
   };
 
-  const handleDeleteImporter = () => {
+  const handleDeleteImporter = async () => {
     if (!deletingImporter) return;
-
-    setImporters(importers.filter((imp) => imp.id !== deletingImporter.id));
-    toast.success('Importadora excluída com sucesso!');
-    setShowDeleteDialog(false);
-    setDeletingImporter(null);
+    setDeleting(true);
+    try {
+      await deleteImportadora(deletingImporter.id);
+      await refetch();
+      toast.success('Importadora excluída com sucesso!');
+      setShowDeleteDialog(false);
+      setDeletingImporter(null);
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir a importadora.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('pt-BR');
+    return new Date(dateString).toLocaleDateString('pt-BR');
   };
 
   const closeDialog = () => {
     setShowAddDialog(false);
     setEditingImporter(null);
-    setFormData({ name: '', contactEmail: '', contactPhone: '', cnpj: '' });
-    setErrors({ name: '', contactEmail: '', contactPhone: '', cnpj: '' });
+    setFormData({ name: '', cnpj: '', active: true });
+    setErrors({ name: '', cnpj: '' });
   };
 
-  const filteredImporters = importers.filter((importer) =>
-    importer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    importer.contactEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    importer.cnpj?.includes(searchTerm)
+  const filteredImporters = importersView.filter(
+    (importer) =>
+      importer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      importer.cnpj?.includes(searchTerm)
   );
 
-  // Se estiver visualizando uma importadora, mostrar a página de detalhes
   if (viewingImporter) {
     return (
       <ImporterDetail
         importer={viewingImporter}
         onBack={() => setViewingImporter(null)}
         onUpdate={(updatedImporter) => {
-          setImporters(
-            importers.map((imp) =>
-              imp.id === updatedImporter.id ? updatedImporter : imp
-            )
-          );
-          setViewingImporter(updatedImporter);
+          refetch();
+          setViewingImporter({
+            ...updatedImporter,
+            productsCount: getProductsCount(updatedImporter.id),
+          });
         }}
-        onDelete={(importerId) => {
-          setImporters(importers.filter((imp) => imp.id !== importerId));
-          toast.success('Importadora excluída com sucesso!');
-          setViewingImporter(null);
+        onDelete={async (importerId) => {
+          try {
+            await deleteImportadora(importerId);
+            await refetch();
+            toast.success('Importadora excluída com sucesso!');
+            setViewingImporter(null);
+          } catch (e) {
+            console.error(e);
+            toast.error('Não foi possível excluir a importadora.');
+          }
         }}
       />
+    );
+  }
+
+  if (loading && importadoras.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="mb-1">Importadoras</h2>
+            <p className="text-muted-foreground">
+              Gerencie as importadoras cadastradas na plataforma
+            </p>
+          </div>
+        </div>
+        <Card className="p-12">
+          <div className="text-center text-muted-foreground">
+            Carregando importadoras...
+          </div>
+        </Card>
+      </div>
     );
   }
 
@@ -246,7 +236,7 @@ export const Importers: React.FC = () => {
       </div>
 
       {/* Busca */}
-      {importers.length > 0 && (
+      {importadoras.length > 0 && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -299,18 +289,12 @@ export const Importers: React.FC = () => {
                       CNPJ: {importer.cnpj}
                     </p>
                   )}
-                  <p className="text-xs text-muted-foreground">
-                    Email: {importer.contactEmail}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Telefone: {importer.contactPhone}
-                  </p>
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
-      ) : importers.length === 0 ? (
+      ) : importadoras.length === 0 && !loading ? (
         <Card className="p-12">
           <div className="text-center space-y-3">
             <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
@@ -358,7 +342,7 @@ export const Importers: React.FC = () => {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm">Nome da Importadora *</label>
+              <Label>Nome da Importadora *</Label>
               <Input
                 placeholder="Ex: Importadora Global Mix"
                 value={formData.name}
@@ -372,7 +356,7 @@ export const Importers: React.FC = () => {
               )}
             </div>
             <div className="space-y-2">
-              <label className="text-sm">CNPJ</label>
+              <Label>CNPJ *</Label>
               <Input
                 placeholder="00.000.000/0000-00"
                 value={formData.cnpj}
@@ -385,45 +369,31 @@ export const Importers: React.FC = () => {
                 <p className="text-xs text-destructive">{errors.cnpj}</p>
               )}
             </div>
-            <div className="space-y-2">
-              <label className="text-sm">Email de Contato *</label>
-              <Input
-                type="email"
-                placeholder="contato@importadora.com.br"
-                value={formData.contactEmail}
-                onChange={(e) => {
-                  setFormData({ ...formData, contactEmail: e.target.value });
-                  setErrors({ ...errors, contactEmail: '' });
-                }}
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div>
+                <Label>Ativa</Label>
+                <p className="text-xs text-muted-foreground">
+                  Importadoras inativas não aparecem nas listagens.
+                </p>
+              </div>
+              <Switch
+                checked={formData.active}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, active: checked })
+                }
               />
-              {errors.contactEmail && (
-                <p className="text-xs text-destructive">{errors.contactEmail}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm">Telefone *</label>
-              <Input
-                placeholder="(11) 98765-4321"
-                value={formData.contactPhone}
-                onChange={(e) => {
-                  setFormData({ ...formData, contactPhone: e.target.value });
-                  setErrors({ ...errors, contactPhone: '' });
-                }}
-              />
-              {errors.contactPhone && (
-                <p className="text-xs text-destructive">{errors.contactPhone}</p>
-              )}
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={closeDialog}>
+            <Button variant="outline" onClick={closeDialog} disabled={saving}>
               Cancelar
             </Button>
             <Button
               onClick={editingImporter ? handleUpdateImporter : handleAddImporter}
               className="bg-primary hover:bg-primary/90"
+              disabled={saving}
             >
-              {editingImporter ? 'Atualizar' : 'Adicionar'}
+              {saving ? 'Salvando...' : editingImporter ? 'Atualizar' : 'Adicionar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -455,14 +425,19 @@ export const Importers: React.FC = () => {
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteDialog(false)}
+              disabled={deleting}
+            >
               Cancelar
             </Button>
             <Button
               onClick={handleDeleteImporter}
               variant="destructive"
+              disabled={deleting}
             >
-              Sim, Excluir
+              {deleting ? 'Excluindo...' : 'Sim, Excluir'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,5 +1,22 @@
 # Conferir e corrigir perfis (profiles) no Supabase
 
+Para o **login funcionar**, cada usuário do Auth precisa ter uma linha na tabela **`public.profiles`** (mesmo `id`, `name`, `email`, `role`). Quem se cadastra como representante passa a ter o perfil criado pelo app após o signup; se não existir trigger ou a política abaixo, use o passo 2 para criar manualmente.
+
+**Política RLS para o app criar perfil no cadastro** (rode no SQL Editor se novos cadastros não conseguirem fazer login):
+
+```sql
+-- Permite que o usuário crie/atualize o próprio perfil (usado no cadastro de representante)
+CREATE POLICY "profiles_insert_own"
+ON public.profiles FOR INSERT TO authenticated
+WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "profiles_update_own"
+ON public.profiles FOR UPDATE TO authenticated
+USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+```
+
+---
+
 ## 1. Ver o que está no banco
 
 No **SQL Editor** do Supabase, rode:
@@ -71,3 +88,48 @@ UPDATE public.profiles SET role = 'admin' WHERE email = 'seu@email.com';
 - Abra o app, tente logar e veja a **mensagem em vermelho** na tela.
 - Abra o **Console** do navegador (F12 → Console) e veja se aparece algum erro em vermelho ao clicar em Entrar.
 - Confira na Vercel se as variáveis **VITE_SUPABASE_URL** e **VITE_SUPABASE_ANON_KEY** estão corretas (mesmo projeto do Supabase em que você rodou o SQL).
+
+---
+
+## 4. Perfil existe mas não aparece na lista de Representantes (backoffice)
+
+Se a linha está em **profiles** (e o login funciona) mas **não** em **representantes**, a pessoa não aparece na tela Representantes do backoffice. Inclua ela em **representantes** com o SQL abaixo.
+
+**Se der erro de "null value in column importer_id"**, rode primeiro (uma vez):
+
+```sql
+ALTER TABLE public.representantes
+ALTER COLUMN importer_id DROP NOT NULL;
+```
+
+Depois:
+
+1. Pegue o **id** (UUID) e o **nome** e **email** da linha em **profiles** (ou em **Authentication → Users**).
+2. No **SQL Editor**, rode trocando **USER_UUID**, **Nome** e **email@exemplo.com**:
+
+```sql
+INSERT INTO public.representantes (user_id, name, email, phone, status)
+VALUES (
+  'USER_UUID'::uuid,
+  'Nome',
+  'email@exemplo.com',
+  '',
+  'active'
+);
+```
+
+Exemplo (só ilustrativo):
+
+```sql
+INSERT INTO public.representantes (user_id, name, email, phone, status)
+VALUES (
+  'a1b2c3d4-e5f6-7890-abcd-ef1234567890'::uuid,
+  'Gabriella',
+  'gabriella.severo@gmail.com',
+  '',
+  'active'
+);
+```
+
+- Use `'pending'` em vez de `'active'` se quiser que apareça como “Pendente” para o admin aprovar.
+- Depois de rodar, a pessoa deve aparecer na lista **Representantes** do backoffice.

@@ -43,14 +43,7 @@ import {
   updateRepresentativeStatus,
   deleteRepresentative,
 } from '@/services/representantes';
-
-// Mock de importadoras disponíveis
-const mockImporters = [
-  { id: '1', name: 'Importadora Global Mix' },
-  { id: '2', name: 'Brasil Import Trading' },
-  { id: '3', name: 'Mega Importações LTDA' },
-  { id: '4', name: 'Internacional Express' },
-];
+import { useImportadoras } from '@/hooks/useData';
 
 const statusConfig = {
   active: {
@@ -77,6 +70,7 @@ const statusConfig = {
 };
 
 export const Representatives: React.FC = () => {
+  const { importadoras } = useImportadoras();
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<RepresentativeStatus | 'all'>('all');
@@ -573,7 +567,7 @@ export const Representatives: React.FC = () => {
                     className="w-full justify-between"
                   >
                     {formData.importerId
-                      ? mockImporters.find((importer) => importer.id === formData.importerId)
+                      ? importadoras.find((importer) => importer.id === formData.importerId)
                           ?.name
                       : 'Selecione uma importadora...'}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -600,7 +594,7 @@ export const Representatives: React.FC = () => {
                           />
                           Nenhuma (representante autônoma)
                         </CommandItem>
-                        {mockImporters.map((importer) => (
+                        {importadoras.map((importer) => (
                           <CommandItem
                             key={importer.id}
                             value={importer.name}

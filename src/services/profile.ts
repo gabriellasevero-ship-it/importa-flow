@@ -11,6 +11,23 @@ export async function getProfile(userId: string) {
   return data ? mapProfile(data) : null;
 }
 
+/**
+ * Cria ou atualiza o perfil do usuário (ex.: após signup de representante).
+ * Requer política RLS que permita INSERT/UPDATE em profiles onde auth.uid() = id.
+ */
+export async function ensureProfile(userId: string, name: string, email: string): Promise<void> {
+  const { error } = await supabase.from('profiles').upsert(
+    {
+      id: userId,
+      name,
+      email,
+      role: 'representante',
+    },
+    { onConflict: 'id' }
+  );
+  if (error) throw error;
+}
+
 export async function updateProfile(
   userId: string,
   updates: { name?: string; phone?: string; avatar_url?: string; role?: 'representante' | 'admin' }
