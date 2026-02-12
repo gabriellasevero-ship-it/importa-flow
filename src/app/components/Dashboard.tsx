@@ -5,20 +5,12 @@ import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrders } from '@/contexts/OrdersContext';
-import { useImportadoras, useCategories, useProducts, useCommissions } from '@/hooks/useData';
+import { useImportadoras, useProducts, useCommissions, useRepresentatives } from '@/hooks/useData';
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
   mode?: 'admin' | 'representante';
 }
-
-// Mock de representantes (quantidade)
-const mockRepresentatives = [
-  { id: '1', status: 'active' },
-  { id: '2', status: 'active' },
-  { id: '3', status: 'pending' },
-  { id: '4', status: 'suspended' },
-];
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const { user } = useAuth();
@@ -26,6 +18,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const { importadoras } = useImportadoras();
   const { products } = useProducts();
   const { commissions } = useCommissions();
+  const { representatives } = useRepresentatives();
 
   // Métricas para representante
   const totalVendido = orders
@@ -47,11 +40,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   // Isso garante que o toggle Representante/Backoffice controle 100% o layout.
   const effectiveRole: 'admin' | 'representante' = mode ?? 'representante';
 
-  // Estatísticas para admin
+  // Estatísticas para admin (dados reais)
   const totalImportadoras = importadoras.length;
   const importadorasAtivas = importadoras.filter(i => i.active).length;
-  const totalRepresentantes = mockRepresentatives.length;
-  const representantesAtivos = mockRepresentatives.filter(r => r.status === 'active').length;
+  const totalRepresentantes = representatives.length;
+  const representantesAtivos = representatives.filter(r => r.status === 'active').length;
   const totalProdutos = products.length;
   const produtosAtivos = products.filter(p => p.active).length;
   const totalPedidos = orders.length;
