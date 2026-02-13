@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import { extractTextFromPdf } from '@/lib/pdfUtils';
+import { extractTextAndPageImages } from '@/lib/pdfUtils';
 import { parseCatalogText } from '@/lib/catalogParser';
 import { useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
+import { uploadCatalogPageImage } from '@/services/storage';
 import type { Product as ApiProduct } from '@/types';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -259,14 +260,25 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     if (!uploadedFile) return;
     setCatalogProcessing(true);
     try {
-      const text = await extractTextFromPdf(uploadedFile);
-      const items = parseCatalogText(text);
-      if (items.length === 0) {
+      const { pageTexts, pageBlobs } = await extractTextAndPageImages(uploadedFile);
+      const itemsWithPage: Array<ReturnType<typeof parseCatalogText>[number] & { pageIndex: number }> = [];
+      for (let i = 0; i < pageTexts.length; i++) {
+        const pageItems = parseCatalogText(pageTexts[i]);
+        pageItems.forEach((item) => itemsWithPage.push({ ...item, pageIndex: i }));
+      }
+      if (itemsWithPage.length === 0) {
         toast.warning('Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.');
         return;
       }
+      const batchId = String(Date.now());
+      const pageImageUrls: string[] = [];
+      for (let i = 0; i < pageBlobs.length; i++) {
+        const url = await uploadCatalogPageImage(importer.id, i, pageBlobs[i], batchId);
+        pageImageUrls.push(url);
+      }
       let created = 0;
-      for (const item of items) {
+      for (const item of itemsWithPage) {
+        const imageUrl = item.pageIndex < pageImageUrls.length ? pageImageUrls[item.pageIndex] : undefined;
         await productsApi.createProduct({
           importadoraId: importer.id,
           code: item.code,
@@ -277,6 +289,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           material: item.material || undefined,
           dimensions: item.dimensions || undefined,
           active: true,
+          image: imageUrl,
         });
         created++;
       }
@@ -284,7 +297,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       setShowCatalogUploadDialog(false);
       setUploadedFileName(null);
       setUploadedFile(null);
-      toast.success(`Catálogo processado: ${created} produto(s) adicionado(s).`);
+      toast.success(`Catálogo processado: ${created} produto(s) adicionado(s) com imagens das páginas.`);
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível processar o catálogo. Tente novamente ou adicione produtos manualmente.');
@@ -878,13 +891,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             <div className="bg-muted/50 rounded-lg p-4 space-y-2">
               <p className="text-sm font-medium">O que será extraído:</p>
               <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
-                <li>Código do produto</li>
-                <li>Nome e categoria</li>
-                <li>Preço</li>
-                <li>Quantidade por caixa</li>
-                <li>Material e dimensões</li>
-                <li>Imagens dos produtos (quando disponível)</li>
+                <li>Código, nome e preço (em campos separados)</li>
+                <li>Material e dimensões (quando identificados no texto)</li>
+                <li>Uma imagem por página (a página inteira como foto do produto)</li>
               </ul>
+              <p className="text-xs text-muted-foreground pt-1">
+                Produtos da mesma página compartilham a mesma imagem. Você pode trocar por foto do produto depois.
+              </p>
             </div>
           </div>
           <DialogFooter>
