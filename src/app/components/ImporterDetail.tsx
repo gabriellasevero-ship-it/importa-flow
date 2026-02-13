@@ -270,7 +270,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         toast.warning('Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.');
         return;
       }
-      const codeUsed = new Set<string>();
+      const codeUsed = new Set(products.map((p) => p.code));
       const ensureUniqueCode = (code: string, index: number): string => {
         const base = (code && code.trim()) || `CAT-${index + 1}`;
         if (!codeUsed.has(base)) {
