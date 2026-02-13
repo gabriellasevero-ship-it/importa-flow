@@ -270,11 +270,32 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         toast.warning('Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.');
         return;
       }
+      const codeUsed = new Set<string>();
+      const ensureUniqueCode = (code: string, index: number): string => {
+        const base = (code && code.trim()) || `CAT-${index + 1}`;
+        if (!codeUsed.has(base)) {
+          codeUsed.add(base);
+          return base;
+        }
+        let n = index + 1;
+        while (codeUsed.has(`CAT-${n}`)) n++;
+        const unique = `CAT-${n}`;
+        codeUsed.add(unique);
+        return unique;
+      };
+      itemsWithPage.forEach((item, idx) => {
+        item.code = ensureUniqueCode(item.code, idx);
+      });
       const batchId = String(Date.now());
       const pageImageUrls: string[] = [];
-      for (let i = 0; i < pageBlobs.length; i++) {
-        const url = await uploadCatalogPageImage(importer.id, i, pageBlobs[i], batchId);
-        pageImageUrls.push(url);
+      try {
+        for (let i = 0; i < pageBlobs.length; i++) {
+          const url = await uploadCatalogPageImage(importer.id, i, pageBlobs[i], batchId);
+          pageImageUrls.push(url);
+        }
+      } catch (storageErr) {
+        console.warn('Upload de imagens falhou, produtos serão criados sem foto:', storageErr);
+        toast.warning('Imagens não foram enviadas. Produtos serão criados sem foto.');
       }
       let created = 0;
       for (const item of itemsWithPage) {
@@ -297,10 +318,19 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       setShowCatalogUploadDialog(false);
       setUploadedFileName(null);
       setUploadedFile(null);
-      toast.success(`Catálogo processado: ${created} produto(s) adicionado(s) com imagens das páginas.`);
+      toast.success(
+        pageImageUrls.length > 0
+          ? `Catálogo processado: ${created} produto(s) adicionado(s) com imagens das páginas.`
+          : `Catálogo processado: ${created} produto(s) adicionado(s).`
+      );
     } catch (e) {
       console.error(e);
-      toast.error('Não foi possível processar o catálogo. Tente novamente ou adicione produtos manualmente.');
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(
+        msg.length > 80
+          ? `Erro ao processar catálogo. Verifique o console (F12) para detalhes.`
+          : `Erro: ${msg}`
+      );
     } finally {
       setCatalogProcessing(false);
     }
