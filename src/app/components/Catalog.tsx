@@ -15,6 +15,7 @@ import { useImportadoras, useCategories, useProducts, useClientes } from '@/hook
 import { useCart } from '@/contexts/CartContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
+import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
 import { toast } from 'sonner';
 
 interface CatalogProps {
@@ -73,20 +74,14 @@ export const Catalog: React.FC<CatalogProps> = ({
     ? [] 
     : categories.find(cat => cat.name === selectedCategory)?.subcategories || [];
 
-  const filteredProducts = products.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         product.code.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesImportadora = selectedImportadoras.length === 0 || selectedImportadoras.includes(product.importadoraId);
-    const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    // Produtos sem subcategoria (comum em cadastros legados / catálogo PDF) não devem sumir ao filtrar subcategoria
-    const productSub = product.subcategory?.trim();
-    const matchesSubcategory =
-      selectedSubcategory === 'all' ||
-      !productSub ||
-      productSub === selectedSubcategory;
-
-    return matchesSearch && matchesImportadora && matchesCategory && matchesSubcategory && product.active;
-  });
+  const filteredProducts = products.filter((product) =>
+    productMatchesCatalogFilters(product, {
+      searchTerm,
+      selectedImportadoras,
+      selectedCategory,
+      selectedSubcategory,
+    })
+  );
 
   const handleGenerateLink = () => {
     // Gerar link do catálogo (não precisa de cliente específico)

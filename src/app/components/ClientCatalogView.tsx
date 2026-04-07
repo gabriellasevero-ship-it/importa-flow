@@ -16,6 +16,7 @@ import { useClientAuth } from '@/contexts/ClientAuthContext';
 import { useOrders } from '@/contexts/OrdersContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
+import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
 import { toast } from 'sonner';
 import { Truck } from 'lucide-react';
 
@@ -92,19 +93,14 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     ? [] 
     : categoriesList.find(cat => cat.name === selectedCategory)?.subcategories || [];
 
-  const filteredProducts = productsList.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         product.code.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesImportadora = selectedImportadoras.length === 0 || selectedImportadoras.includes(product.importadoraId);
-    const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    const productSub = product.subcategory?.trim();
-    const matchesSubcategory =
-      selectedSubcategory === 'all' ||
-      !productSub ||
-      productSub === selectedSubcategory;
-
-    return matchesSearch && matchesImportadora && matchesCategory && matchesSubcategory && product.active;
-  });
+  const filteredProducts = productsList.filter((product) =>
+    productMatchesCatalogFilters(product, {
+      searchTerm,
+      selectedImportadoras,
+      selectedCategory,
+      selectedSubcategory,
+    })
+  );
 
   const addToCart = (product: Product) => {
     const existingItem = cart.find(item => item.productId === product.id);
