@@ -29,10 +29,25 @@ function normalizeAuthError(message: string): string {
   if (lower.includes('email not confirmed')) {
     return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';
   }
-  if (lower.includes('network') || lower.includes('fetch')) {
-    return 'Erro de conexão. Verifique a internet e se a URL do backend está correta em produção.';
+  if (
+    lower.includes('network') ||
+    lower.includes('fetch') ||
+    lower.includes('tempo de conexão') ||
+    lower.includes('timeout')
+  ) {
+    return 'Erro de conexão. Verifique a internet e se VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY estão corretos no build de produção.';
   }
   return message;
+}
+
+/** Evita spinner infinito se a API do Supabase não responder (rede, URL errada no deploy, etc.) */
+const LOGIN_TIMEOUT_MS = 15000;
+const PROFILE_TIMEOUT_MS = 8000;
+
+function rejectAfter(ms: number, message: string): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  });
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -94,9 +109,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [loadUser]);
 
-  const LOGIN_TIMEOUT_MS = 15000;
-  const PROFILE_TIMEOUT_MS = 8000;
-
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured()) {
       setUser({
@@ -107,23 +119,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
       return;
     }
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    let data: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>['data'];
+    let error: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>['error'];
+    try {
+      const result = await Promise.race([
+        supabase.auth.signInWithPassword({ email, password }),
+        rejectAfter(
+          LOGIN_TIMEOUT_MS,
+          'Tempo de conexão esgotado ao entrar. Verifique a internet e se VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY estão corretos no build de produção.'
+        ),
+      ]);
+      data = result.data;
+      error = result.error;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao conectar ao servidor de autenticação.';
+      throw new Error(normalizeAuthError(msg));
+    }
     if (error) {
       throw new Error(normalizeAuthError(error.message));
     }
     if (!data.user) return;
 
-    const profileTimeout = new Promise<never>((_, reject) => {
-      setTimeout(
-        () =>
-          reject(
-            new Error(
-              'Perfil demorou para responder. Verifique no Supabase (Table Editor → profiles) se existe uma linha com o id do seu usuário.'
-            )
-          ),
-        PROFILE_TIMEOUT_MS
-      );
-    });
+    const profileTimeout = rejectAfter(
+      PROFILE_TIMEOUT_MS,
+      'Perfil demorou para responder. Verifique no Supabase (Table Editor → profiles) se existe uma linha com o id do seu usuário.'
+    );
 
     try {
       await Promise.race([loadUser(data.user.id), profileTimeout]);
