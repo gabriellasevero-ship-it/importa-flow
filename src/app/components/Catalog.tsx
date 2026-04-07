@@ -14,6 +14,7 @@ import { Product } from '@/types';
 import { useImportadoras, useCategories, useProducts, useClientes } from '@/hooks/useData';
 import { useCart } from '@/contexts/CartContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
+import { ImageWithFallback } from '@/app/components/ui/image';
 import { toast } from 'sonner';
 
 interface CatalogProps {
@@ -40,7 +41,11 @@ export const Catalog: React.FC<CatalogProps> = ({
   const [selectedCliente, setSelectedCliente] = useState<string>('');
   const [selectedClienteForOrder, setSelectedClienteForOrder] = useState<string>('');
   const [observations, setObservations] = useState('');
-  const [zoomedImage, setZoomedImage] = useState<{ productName: string; code: string } | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<{
+    productName: string;
+    code: string;
+    image?: string;
+  } | null>(null);
   const [compareProducts, setCompareProducts] = useState<string[]>([]);
   const [showComparator, setShowComparator] = useState(false);
   const [showImageSearchDialog, setShowImageSearchDialog] = useState(false);
@@ -350,10 +355,22 @@ export const Catalog: React.FC<CatalogProps> = ({
                   className="aspect-square bg-gray-50 rounded-lg flex items-center justify-center border relative overflow-hidden cursor-zoom-in"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setZoomedImage({ productName: product.name, code: product.code });
+                    setZoomedImage({
+                      productName: product.name,
+                      code: product.code,
+                      image: product.image,
+                    });
                   }}
                 >
-                  <Package className="w-16 h-16 text-muted-foreground" />
+                  {product.image ? (
+                    <ImageWithFallback
+                      src={product.image}
+                      alt={product.name}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <Package className="w-16 h-16 text-muted-foreground" />
+                  )}
                   {/* Zoom indicator */}
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 rounded-full p-2">
@@ -506,8 +523,16 @@ export const Catalog: React.FC<CatalogProps> = ({
                         <CardContent className="space-y-3 pt-0">
                           {group.items.map(item => (
                             <div key={item.productId} className="flex gap-3 p-3 bg-muted/30 rounded-lg">
-                              <div className="w-16 h-16 bg-muted rounded-lg flex-shrink-0 flex items-center justify-center">
-                                <Package className="w-8 h-8 text-muted-foreground" />
+                              <div className="w-16 h-16 bg-muted rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden">
+                                {item.product.image ? (
+                                  <ImageWithFallback
+                                    src={item.product.image}
+                                    alt={item.product.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <Package className="w-8 h-8 text-muted-foreground" />
+                                )}
                               </div>
                               
                               <div className="flex-1 min-w-0">
@@ -686,8 +711,18 @@ export const Catalog: React.FC<CatalogProps> = ({
           </DialogHeader>
           
           <div className="flex items-center justify-center bg-gray-50 rounded-lg p-8">
-            <div className="w-full aspect-square max-w-2xl bg-white rounded-lg flex items-center justify-center border-2">
-              <Package className="w-32 h-32 text-muted-foreground" />
+            <div className="w-full max-w-2xl bg-white rounded-lg flex items-center justify-center border-2 min-h-[200px] overflow-hidden">
+              {zoomedImage?.image ? (
+                <ImageWithFallback
+                  src={zoomedImage.image}
+                  alt={zoomedImage.productName}
+                  className="max-h-[70vh] w-full object-contain"
+                />
+              ) : (
+                <div className="aspect-square w-full max-w-2xl flex items-center justify-center">
+                  <Package className="w-32 h-32 text-muted-foreground" />
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
@@ -760,13 +795,24 @@ export const Catalog: React.FC<CatalogProps> = ({
                       {/* Image Row */}
                       <tr className="border-b">
                         <td className="p-3 font-medium">Imagem</td>
-                        {compareProducts.map(productId => (
-                          <td key={productId} className="p-3">
-                            <div className="aspect-square bg-gray-50 rounded-lg flex items-center justify-center border w-32">
-                              <Package className="w-12 h-12 text-muted-foreground" />
-                            </div>
-                          </td>
-                        ))}
+                        {compareProducts.map(productId => {
+                          const cmpProduct = products.find(p => p.id === productId);
+                          return (
+                            <td key={productId} className="p-3">
+                              <div className="aspect-square bg-gray-50 rounded-lg flex items-center justify-center border w-32 overflow-hidden">
+                                {cmpProduct?.image ? (
+                                  <ImageWithFallback
+                                    src={cmpProduct.image}
+                                    alt={cmpProduct.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <Package className="w-12 h-12 text-muted-foreground" />
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
                       </tr>
 
                       {/* Code Row */}

@@ -15,6 +15,7 @@ import { Product, CartItem, Order } from '@/types';
 import { useClientAuth } from '@/contexts/ClientAuthContext';
 import { useOrders } from '@/contexts/OrdersContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
+import { ImageWithFallback } from '@/app/components/ui/image';
 import { toast } from 'sonner';
 import { Truck } from 'lucide-react';
 
@@ -59,6 +60,11 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   const [selectedTransportadoraId, setSelectedTransportadoraId] = useState<string>('');
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<Order | null>(null);
   const [showImageSearchDialog, setShowImageSearchDialog] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<{
+    productName: string;
+    code: string;
+    image?: string;
+  } | null>(null);
 
   // Dados de cadastro
   const [registerData, setRegisterData] = useState({
@@ -434,8 +440,28 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
             return (
               <Card key={product.id} className="hover:shadow-lg transition-shadow">
                 <CardContent className="p-0">
-                  <div className="aspect-square bg-gray-50 rounded-t-lg flex items-center justify-center border-b">
-                    <Package className="w-16 h-16 text-muted-foreground" />
+                  <div
+                    className={`aspect-square bg-gray-50 rounded-t-lg flex items-center justify-center border-b overflow-hidden ${
+                      product.image ? 'cursor-zoom-in' : ''
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setZoomedImage({
+                        productName: product.name,
+                        code: product.code,
+                        image: product.image,
+                      });
+                    }}
+                  >
+                    {product.image ? (
+                      <ImageWithFallback
+                        src={product.image}
+                        alt={product.name}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <Package className="w-16 h-16 text-muted-foreground" />
+                    )}
                   </div>
                   
                   <div className="p-4 space-y-2">
@@ -587,8 +613,16 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                         <CardContent className="space-y-3 pt-0">
                           {group.items.map(item => (
                             <div key={item.productId} className="flex gap-3 p-3 bg-muted/30 rounded-lg">
-                              <div className="w-16 h-16 bg-muted rounded-lg flex-shrink-0 flex items-center justify-center">
-                                <Package className="w-8 h-8 text-muted-foreground" />
+                              <div className="w-16 h-16 bg-muted rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden">
+                                {item.product.image ? (
+                                  <ImageWithFallback
+                                    src={item.product.image}
+                                    alt={item.product.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <Package className="w-8 h-8 text-muted-foreground" />
+                                )}
                               </div>
                               
                               <div className="flex-1 min-w-0">
@@ -1132,8 +1166,16 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                       <div className="space-y-2">
                         {selectedOrderDetail.items.map((item, index) => (
                           <div key={index} className="flex items-center gap-4 p-3 border rounded-lg">
-                            <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center">
-                              <Package className="w-8 h-8 text-muted-foreground" />
+                            <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                              {item.product.image ? (
+                                <ImageWithFallback
+                                  src={item.product.image}
+                                  alt={item.product.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <Package className="w-8 h-8 text-muted-foreground" />
+                              )}
                             </div>
                             <div className="flex-1">
                               <p className="font-medium mb-1">{item.product.name}</p>
@@ -1229,6 +1271,30 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!zoomedImage} onOpenChange={() => setZoomedImage(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{zoomedImage?.productName}</DialogTitle>
+            <DialogDescription>Código: {zoomedImage?.code}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-center bg-gray-50 rounded-lg p-8">
+            <div className="w-full max-w-2xl bg-white rounded-lg flex items-center justify-center border-2 min-h-[200px] overflow-hidden">
+              {zoomedImage?.image ? (
+                <ImageWithFallback
+                  src={zoomedImage.image}
+                  alt={zoomedImage.productName}
+                  className="max-h-[70vh] w-full object-contain"
+                />
+              ) : (
+                <div className="aspect-square w-full max-w-2xl flex items-center justify-center">
+                  <Package className="w-32 h-32 text-muted-foreground" />
+                </div>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
