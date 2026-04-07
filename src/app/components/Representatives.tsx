@@ -166,7 +166,6 @@ export const Representatives: React.FC = () => {
           toast.success('Representante atualizado com sucesso!');
         } else {
           const created = await createRepresentative({
-            userId: '',
             name: formData.name,
             email: formData.email,
             phone: formData.phone,
@@ -174,6 +173,7 @@ export const Representatives: React.FC = () => {
             cnpj: formData.cnpj || undefined,
             company: formData.company || undefined,
             importerId: formData.importerId || undefined,
+            status: formData.status,
           });
           setRepresentatives((prev) => [created, ...prev]);
           toast.success('Representante cadastrado com sucesso!');

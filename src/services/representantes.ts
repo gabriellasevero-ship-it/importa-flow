@@ -19,7 +19,7 @@ export interface Representative {
 
 type DbRepresentative = {
   id: string;
-  user_id: string;
+  user_id: string | null;
   name: string;
   email: string;
   phone: string;
@@ -35,7 +35,7 @@ type DbRepresentative = {
 function mapRepresentative(row: DbRepresentative): Representative {
   return {
     id: row.id,
-    userId: row.user_id,
+    userId: row.user_id ?? '',
     name: row.name,
     email: row.email,
     phone: row.phone,
@@ -75,7 +75,7 @@ export async function fetchRepresentatives(): Promise<Representative[]> {
 }
 
 export async function createRepresentative(input: {
-  userId: string;
+  userId?: string;
   name: string;
   email: string;
   phone: string;
@@ -83,11 +83,31 @@ export async function createRepresentative(input: {
   cnpj?: string;
   company?: string;
   importerId?: string;
+  status?: RepresentativeStatus;
 }): Promise<Representative> {
+  const uid = input.userId?.trim();
+  const userIdForDb = uid && uid.length > 0 ? uid : null;
+
+  if (!isSupabaseConfigured()) {
+    return {
+      id: `demo-rep-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+      userId: userIdForDb ?? '',
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      cpf: input.cpf,
+      cnpj: input.cnpj,
+      company: input.company,
+      importerId: input.importerId,
+      status: input.status ?? 'pending',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   const { data, error } = await supabase
     .from('representantes')
     .insert({
-      user_id: input.userId,
+      user_id: userIdForDb,
       name: input.name,
       email: input.email,
       phone: input.phone,
@@ -95,7 +115,7 @@ export async function createRepresentative(input: {
       cnpj: input.cnpj ?? null,
       company: input.company ?? null,
       importer_id: input.importerId ?? null,
-      status: 'pending' as RepresentativeStatus,
+      status: (input.status ?? 'pending') as RepresentativeStatus,
     })
     .select()
     .single();

@@ -10,11 +10,14 @@ export async function uploadCatalogPageImage(
   importadoraId: string,
   pageIndex: number,
   blob: Blob,
-  batchId?: string
+  batchId?: string,
+  /** Vários produtos na mesma página: índice 0, 1, … para nome de arquivo único. */
+  productSlot?: number
 ): Promise<string> {
   const ext = blob.type === 'image/png' ? 'png' : 'jpg';
   const id = batchId ?? Date.now();
-  const path = `${CATALOG_IMAGES_PREFIX}/${importadoraId}/${id}-page-${pageIndex + 1}.${ext}`;
+  const slotSuffix = typeof productSlot === 'number' ? `-slot${productSlot + 1}` : '';
+  const path = `${CATALOG_IMAGES_PREFIX}/${importadoraId}/${id}-page-${pageIndex + 1}${slotSuffix}.${ext}`;
   const { data, error } = await supabase.storage
     .from('product-images')
     .upload(path, blob, { contentType: blob.type, upsert: true });

@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import { extractTextAndPageImages } from '@/lib/pdfUtils';
+import {
+  cropImageBlobVertical,
+  equalVerticalCropFracs,
+  extractTextAndPageImages,
+} from '@/lib/pdfUtils';
 import { parseCatalogText } from '@/lib/catalogParser';
 import { useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
@@ -260,7 +264,18 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     if (!uploadedFile) return;
     setCatalogProcessing(true);
     try {
-      const { pageTexts, pageBlobs } = await extractTextAndPageImages(uploadedFile);
+      const { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands } = await extractTextAndPageImages(
+        uploadedFile,
+        {
+          onOcrStarting: () => {
+            toast.info('Usando OCR no catálogo', {
+              description:
+                'Algumas páginas têm pouco texto selecionável; estamos lendo a imagem. Pode levar mais alguns instantes.',
+              duration: 10_000,
+            });
+          },
+        }
+      );
       const itemsWithPage: Array<ReturnType<typeof parseCatalogText>[number] & { pageIndex: number }> = [];
       for (let i = 0; i < pageTexts.length; i++) {
         const pageItems = parseCatalogText(pageTexts[i]);
@@ -271,35 +286,80 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         return;
       }
       const codeUsed = new Set(products.map((p) => p.code));
-      const ensureUniqueCode = (code: string, index: number): string => {
-        const base = (code && code.trim()) || `CAT-${index + 1}`;
+      const ensureUniqueCode = (code: string, pageIndex: number, batchIndex: number): string => {
+        const fallback = `PAG-${pageIndex + 1}-${batchIndex + 1}`;
+        const base = (code && code.trim()) || fallback;
         if (!codeUsed.has(base)) {
           codeUsed.add(base);
           return base;
         }
-        let n = index + 1;
-        while (codeUsed.has(`CAT-${n}`)) n++;
-        const unique = `CAT-${n}`;
-        codeUsed.add(unique);
-        return unique;
+        let n = 2;
+        let candidate = `${base}-${n}`;
+        while (codeUsed.has(candidate)) {
+          n += 1;
+          candidate = `${base}-${n}`;
+        }
+        codeUsed.add(candidate);
+        return candidate;
       };
+
+      const itemsByPage = new Map<number, typeof itemsWithPage>();
+      for (const it of itemsWithPage) {
+        const arr = itemsByPage.get(it.pageIndex) ?? [];
+        arr.push(it);
+        itemsByPage.set(it.pageIndex, arr);
+      }
+
+      const cropByItem = new Map<
+        (typeof itemsWithPage)[number],
+        { top: number; bottom: number }
+      >();
+      for (const [pIdx, list] of itemsByPage) {
+        if (list.length <= 1) continue;
+        const bands = pageSkuVerticalBands[pIdx] ?? [];
+        const equal = equalVerticalCropFracs(list.length);
+        list.forEach((item, slot) => {
+          const bySku = bands.find((b) => b.sku === item.code);
+          if (bySku) {
+            cropByItem.set(item, { top: bySku.topFrac, bottom: bySku.bottomFrac });
+          } else if (equal[slot]) {
+            cropByItem.set(item, { top: equal[slot].topFrac, bottom: equal[slot].bottomFrac });
+          }
+        });
+      }
+
       itemsWithPage.forEach((item, idx) => {
-        item.code = ensureUniqueCode(item.code, idx);
+        item.code = ensureUniqueCode(item.code, item.pageIndex, idx);
       });
       const batchId = String(Date.now());
-      const pageImageUrls: string[] = [];
-      try {
-        for (let i = 0; i < pageBlobs.length; i++) {
-          const url = await uploadCatalogPageImage(importer.id, i, pageBlobs[i], batchId);
-          pageImageUrls.push(url);
-        }
-      } catch (storageErr) {
-        console.warn('Upload de imagens falhou, produtos serão criados sem foto:', storageErr);
-        toast.warning('Imagens não foram enviadas. Produtos serão criados sem foto.');
-      }
+
       let created = 0;
+      let uploadFailed = false;
       for (const item of itemsWithPage) {
-        const imageUrl = item.pageIndex < pageImageUrls.length ? pageImageUrls[item.pageIndex] : undefined;
+        const pageBlob = item.pageIndex < pageBlobs.length ? pageBlobs[item.pageIndex] : undefined;
+        let blob: Blob | undefined = pageBlob;
+        const crop = cropByItem.get(item);
+        if (crop && pageBlob) {
+          const cropped = await cropImageBlobVertical(pageBlob, crop.top, crop.bottom);
+          if (cropped) blob = cropped;
+        }
+        const samePage = itemsByPage.get(item.pageIndex) ?? [item];
+        const productSlot = samePage.length > 1 ? samePage.indexOf(item) : undefined;
+        let imageUrl: string | undefined;
+        if (blob) {
+          try {
+            imageUrl = await uploadCatalogPageImage(
+              importer.id,
+              item.pageIndex,
+              blob,
+              batchId,
+              productSlot
+            );
+          } catch (storageErr) {
+            console.warn('Upload de imagem falhou para um produto:', storageErr);
+            uploadFailed = true;
+          }
+        }
         await productsApi.createProduct({
           importadoraId: importer.id,
           code: item.code,
@@ -314,15 +374,24 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         });
         created++;
       }
+      if (uploadFailed) {
+        toast.warning('Algumas imagens não foram enviadas; revise os produtos sem foto.');
+      }
       await refetchProducts();
       setShowCatalogUploadDialog(false);
       setUploadedFileName(null);
       setUploadedFile(null);
-      toast.success(
-        pageImageUrls.length > 0
-          ? `Catálogo processado: ${created} produto(s) adicionado(s) com imagens das páginas.`
-          : `Catálogo processado: ${created} produto(s) adicionado(s).`
-      );
+      const hadAnyBlob = pageBlobs.length > 0;
+      const successTitle = hadAnyBlob
+        ? `Catálogo processado: ${created} produto(s) adicionado(s) com imagens.`
+        : `Catálogo processado: ${created} produto(s) adicionado(s).`;
+      if (ocrPageCount > 0) {
+        toast.success(successTitle, {
+          description: `OCR aplicado em ${ocrPageCount} página(s) para extrair código, preço e descrição.`,
+        });
+      } else {
+        toast.success(successTitle);
+      }
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : String(e);
