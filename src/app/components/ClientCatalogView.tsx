@@ -97,8 +97,12 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                          product.code.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesImportadora = selectedImportadoras.length === 0 || selectedImportadoras.includes(product.importadoraId);
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    const matchesSubcategory = selectedSubcategory === 'all' || product.subcategory === selectedSubcategory;
-    
+    const productSub = product.subcategory?.trim();
+    const matchesSubcategory =
+      selectedSubcategory === 'all' ||
+      !productSub ||
+      productSub === selectedSubcategory;
+
     return matchesSearch && matchesImportadora && matchesCategory && matchesSubcategory && product.active;
   });
 

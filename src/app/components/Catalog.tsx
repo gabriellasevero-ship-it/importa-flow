@@ -78,8 +78,13 @@ export const Catalog: React.FC<CatalogProps> = ({
                          product.code.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesImportadora = selectedImportadoras.length === 0 || selectedImportadoras.includes(product.importadoraId);
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    const matchesSubcategory = selectedSubcategory === 'all' || product.subcategory === selectedSubcategory;
-    
+    // Produtos sem subcategoria (comum em cadastros legados / catálogo PDF) não devem sumir ao filtrar subcategoria
+    const productSub = product.subcategory?.trim();
+    const matchesSubcategory =
+      selectedSubcategory === 'all' ||
+      !productSub ||
+      productSub === selectedSubcategory;
+
     return matchesSearch && matchesImportadora && matchesCategory && matchesSubcategory && product.active;
   });
 
