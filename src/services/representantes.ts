@@ -62,6 +62,15 @@ const DEMO_REPRESENTATIVES: Representative[] = [
   },
 ];
 
+export async function fetchRepresentativeById(id: string): Promise<Representative | null> {
+  if (!isSupabaseConfigured()) {
+    return DEMO_REPRESENTATIVES.find((r) => r.id === id) ?? null;
+  }
+  const { data, error } = await supabase.from('representantes').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? mapRepresentative(data as DbRepresentative) : null;
+}
+
 export async function fetchRepresentatives(): Promise<Representative[]> {
   if (!isSupabaseConfigured()) {
     return [...DEMO_REPRESENTATIVES];

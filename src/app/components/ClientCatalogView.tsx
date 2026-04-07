@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, UserPlus, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, UserPlus, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -17,12 +17,19 @@ import { useOrders } from '@/contexts/OrdersContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
+import { buildWhatsAppUrl } from '@/lib/whatsapp';
+import { fetchRepresentativeById } from '@/services/representantes';
 import { toast } from 'sonner';
 import { Truck } from 'lucide-react';
+
+const REPRESENTANTE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface RepresentanteInfo {
   id: string;
   name: string;
+  email: string;
+  phone: string;
   avatar?: string;
 }
 
@@ -30,9 +37,15 @@ const MOCK_REPRESENTANTES: Record<string, RepresentanteInfo> = {
   'rep-1': {
     id: 'rep-1',
     name: 'Maria Silva',
-    avatar: undefined, // em produção viria a URL da foto
+    email: 'maria.silva@exemplo.com',
+    phone: '(11) 98765-4321',
+    avatar: undefined,
   },
 };
+
+function defaultRepresentanteInfo(id: string): RepresentanteInfo {
+  return MOCK_REPRESENTANTES[id] ?? { id, name: 'Representante', email: '', phone: '' };
+}
 
 interface ClientCatalogViewProps {
   linkId: string;
@@ -40,7 +53,38 @@ interface ClientCatalogViewProps {
 }
 
 export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, representanteId }) => {
-  const representante = MOCK_REPRESENTANTES[representanteId] ?? { id: representanteId, name: 'Representante' };
+  const [representante, setRepresentante] = useState<RepresentanteInfo>(() =>
+    defaultRepresentanteInfo(representanteId)
+  );
+
+  useEffect(() => {
+    if (!REPRESENTANTE_UUID_RE.test(representanteId)) {
+      setRepresentante(defaultRepresentanteInfo(representanteId));
+      return;
+    }
+
+    let cancelled = false;
+    fetchRepresentativeById(representanteId)
+      .then((r) => {
+        if (cancelled || !r) return;
+        setRepresentante({
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+        });
+      })
+      .catch(() => {
+        /* sem Supabase, RLS ou rede: mantém estado atual */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [representanteId]);
+
+  const whatsappHref = representante.phone ? buildWhatsAppUrl(representante.phone) : null;
+
   const { client, isAuthenticated, logout, login, register } = useClientAuth();
   const { orders, addOrder } = useOrders();
   const { products: productsList } = useProducts();
@@ -192,7 +236,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
       return {
         id: `PED${Date.now()}-${Math.random().toString(36).substring(7)}`,
         representanteId,
-        representanteName: 'Maria Silva',
+        representanteName: representante.name,
         clienteId: client!.id,
         clienteName: client!.name,
         importadoraId,
@@ -313,6 +357,42 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
           </div>
         </div>
       </header>
+
+      <div className="border-b border-border bg-muted/40">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-x-8 text-sm">
+          <p className="text-foreground">
+            <span className="font-semibold">Representante: </span>
+            <span>{representante.name}</span>
+          </p>
+          {representante.email ? (
+            <a
+              href={`mailto:${representante.email}`}
+              className="inline-flex items-center gap-1.5 text-primary hover:underline"
+            >
+              <Mail className="w-4 h-4 shrink-0" aria-hidden />
+              {representante.email}
+            </a>
+          ) : null}
+          {representante.phone ? (
+            whatsappHref ? (
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary hover:underline"
+              >
+                <MessageCircle className="w-4 h-4 shrink-0" aria-hidden />
+                {representante.phone}
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <Phone className="w-4 h-4 shrink-0" aria-hidden />
+                {representante.phone}
+              </span>
+            )
+          ) : null}
+        </div>
+      </div>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* Title and Cart Button */}
