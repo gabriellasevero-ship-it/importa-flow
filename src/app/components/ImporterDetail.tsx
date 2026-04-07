@@ -233,12 +233,18 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   };
 
   const handleDeleteProduct = async () => {
-    if (!deletingProduct) return;
+    const target = deletingProduct ?? editingProduct;
+    if (!target) {
+      toast.error('Nenhum produto selecionado para exclusão.');
+      return;
+    }
     try {
-      await productsApi.deleteProduct(deletingProduct.id);
+      await productsApi.deleteProduct(target.id);
       toast.success('Produto excluído com sucesso!');
       setShowDeleteDialog(false);
       setDeletingProduct(null);
+      setShowProductDialog(false);
+      setEditingProduct(null);
       await refetchProducts();
     } catch (e) {
       console.error(e);
@@ -1172,7 +1178,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             {editingProduct && (
               <Button
                 variant="destructive"
-                onClick={() => setShowDeleteDialog(true)}
+                onClick={() => confirmDeleteProduct(editingProduct)}
                 className="mr-auto"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -1195,7 +1201,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       </Dialog>
 
       {/* Dialog de Confirmação de Exclusão de Produto */}
-      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+      <Dialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          setShowDeleteDialog(open);
+          if (!open) setDeletingProduct(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirmar Exclusão</DialogTitle>
@@ -1205,7 +1217,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             <p className="text-sm text-muted-foreground">
               Tem certeza que deseja excluir o produto{' '}
               <span className="font-semibold text-foreground">
-                {editingProduct?.code} - {editingProduct?.name}
+                {deletingProduct?.code} - {deletingProduct?.name}
               </span>
               ?
             </p>
