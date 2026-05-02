@@ -110,7 +110,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [catalogProcessing, setCatalogProcessing] = useState(false);
+  const [catalogProgress, setCatalogProgress] = useState<{ currentPage: number; totalPages: number } | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productSaving, setProductSaving] = useState(false);
   
   // Estados Financeiros (novas importadoras vêm com plano free e pagamento em dia)
   const [financialData, setFinancialData] = useState({
@@ -138,6 +140,25 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     dimensions: '',
     published: true,
   });
+
+  const getProductSaveErrorMessage = (error: unknown) => {
+    if (!error || typeof error !== 'object') {
+      return 'Não foi possível salvar o produto.';
+    }
+
+    const message = 'message' in error ? String(error.message) : '';
+    const code = 'code' in error ? String(error.code) : '';
+
+    if (code === '23505' || message.toLowerCase().includes('duplicate key')) {
+      return 'Já existe um produto com este código nesta importadora.';
+    }
+
+    if (message) {
+      return message;
+    }
+
+    return 'Não foi possível salvar o produto.';
+  };
 
   const handleSaveInfo = () => {
     const updatedImporter = {
@@ -185,36 +206,50 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   };
 
   const handleSaveProduct = async () => {
-    if (!productFormData.code || !productFormData.name || !productFormData.price) {
-      toast.error('Preencha os campos obrigatórios');
+    const code = productFormData.code.trim();
+    const name = productFormData.name.trim();
+    const category = productFormData.category.trim();
+    const price = Number(productFormData.price);
+    const minOrder = Number.parseInt(productFormData.quantityPerBox, 10) || 1;
+
+    if (!code || !name || !category || !productFormData.price) {
+      toast.error('Preencha código, nome, categoria e preço.');
       return;
     }
 
-    const price = parseFloat(productFormData.price);
-    const minOrder = parseInt(productFormData.quantityPerBox, 10) || 1;
+    if (!Number.isFinite(price) || price <= 0) {
+      toast.error('Informe um preço maior que zero.');
+      return;
+    }
 
+    if (minOrder <= 0) {
+      toast.error('A quantidade por caixa deve ser maior que zero.');
+      return;
+    }
+
+    setProductSaving(true);
     try {
       if (editingProduct) {
         await productsApi.updateProduct(editingProduct.id, {
-          name: productFormData.name,
-          category: productFormData.category,
+          name,
+          category,
           price,
           minOrder,
-          material: productFormData.material || undefined,
-          dimensions: productFormData.dimensions || undefined,
+          material: productFormData.material.trim() || undefined,
+          dimensions: productFormData.dimensions.trim() || undefined,
           active: productFormData.published,
         });
         toast.success('Produto atualizado com sucesso!');
       } else {
         await productsApi.createProduct({
           importadoraId: importer.id,
-          code: productFormData.code,
-          name: productFormData.name,
-          category: productFormData.category,
+          code,
+          name,
+          category,
           price,
           minOrder,
-          material: productFormData.material || undefined,
-          dimensions: productFormData.dimensions || undefined,
+          material: productFormData.material.trim() || undefined,
+          dimensions: productFormData.dimensions.trim() || undefined,
           active: productFormData.published,
         });
         toast.success('Produto adicionado com sucesso!');
@@ -223,7 +258,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       setShowProductDialog(false);
     } catch (e) {
       console.error(e);
-      toast.error('Não foi possível salvar o produto.');
+      toast.error(getProductSaveErrorMessage(e));
+    } finally {
+      setProductSaving(false);
     }
   };
 
@@ -269,6 +306,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const handleProcessCatalog = async () => {
     if (!uploadedFile) return;
     setCatalogProcessing(true);
+    setCatalogProgress(null);
     try {
       const { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands } = await extractTextAndPageImages(
         uploadedFile,
@@ -279,6 +317,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 'Algumas páginas têm pouco texto selecionável; estamos lendo a imagem. Pode levar mais alguns instantes.',
               duration: 10_000,
             });
+          },
+          onPageProcessed: ({ currentPage, totalPages }) => {
+            setCatalogProgress({ currentPage, totalPages });
           },
         }
       );
@@ -387,6 +428,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       setShowCatalogUploadDialog(false);
       setUploadedFileName(null);
       setUploadedFile(null);
+      setCatalogProgress(null);
       const hadAnyBlob = pageBlobs.length > 0;
       const successTitle = hadAnyBlob
         ? `Catálogo processado: ${created} produto(s) adicionado(s) com imagens.`
@@ -408,6 +450,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       );
     } finally {
       setCatalogProcessing(false);
+      setCatalogProgress(null);
     }
   };
 
@@ -1012,6 +1055,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 setShowCatalogUploadDialog(false);
                 setUploadedFileName(null);
                 setUploadedFile(null);
+                setCatalogProgress(null);
               }}
               disabled={catalogProcessing}
             >
@@ -1027,7 +1071,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               ) : (
                 <Upload className="w-4 h-4 mr-2" />
               )}
-              {catalogProcessing ? 'Processando...' : 'Processar Catálogo'}
+              {catalogProcessing
+                ? catalogProgress
+                  ? `Processando página ${catalogProgress.currentPage} de ${catalogProgress.totalPages}...`
+                  : 'Processando...'
+                : 'Processar Catálogo'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1192,8 +1240,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               <Button
                 onClick={handleSaveProduct}
                 className="bg-primary hover:bg-primary/90"
+                disabled={productSaving}
               >
-                {editingProduct ? 'Atualizar' : 'Adicionar'}
+                {productSaving ? 'Salvando...' : editingProduct ? 'Atualizar' : 'Adicionar'}
               </Button>
             </div>
           </DialogFooter>

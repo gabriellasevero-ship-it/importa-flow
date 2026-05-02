@@ -9,6 +9,7 @@ if (typeof pdfjsWorker === 'string') {
 
 const PAGE_IMAGE_SCALE = 1.5;
 const PAGE_IMAGE_JPEG_QUALITY = 0.85;
+const OCR_TIMEOUT_MS = 20_000;
 
 type PdfTextItem = { str: string; hasEOL?: boolean; transform: number[]; width?: number };
 
@@ -322,13 +323,20 @@ async function maybeEnrichTextWithOcr(
   onBeforeOcr?.();
   try {
     const { default: Tesseract } = await import('tesseract.js');
-    const result = await Tesseract.recognize(canvas, 'por+eng', {
+    const ocrPromise = Tesseract.recognize(canvas, 'por+eng', {
       logger: () => {},
     });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error('OCR_TIMEOUT')), OCR_TIMEOUT_MS);
+    });
+    const result = await Promise.race([ocrPromise, timeoutPromise]);
     const ocr = (result.data.text || '').trim();
     const text = ocr.length > nativeText.trim().length ? ocr : nativeText;
     return { text, ranOcr: true };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'OCR_TIMEOUT') {
+      console.warn('OCR excedeu o tempo limite da página; usando texto nativo do PDF.');
+    }
     return { text: nativeText, ranOcr: true };
   }
 }
@@ -394,6 +402,8 @@ export async function extractPageImagesAsBlobs(file: File): Promise<Blob[]> {
 export type ExtractTextAndPageImagesOptions = {
   /** Disparado uma vez, imediatamente antes do primeiro OCR (para avisar que pode demorar). */
   onOcrStarting?: () => void;
+  /** Disparado ao concluir o processamento de cada página do PDF. */
+  onPageProcessed?: (progress: { currentPage: number; totalPages: number }) => void;
 };
 
 /**
@@ -454,6 +464,7 @@ export async function extractTextAndPageImages(
     }
 
     pageTexts.push(pageText);
+    options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
   }
 
   return { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands };

@@ -32,10 +32,19 @@ function normalizeAuthError(message: string): string {
   if (
     lower.includes('network') ||
     lower.includes('fetch') ||
+    lower.includes('load failed') ||
     lower.includes('tempo de conexão') ||
     lower.includes('timeout')
   ) {
-    return 'Erro de conexão. Verifique a internet e se VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY estão corretos no build de produção.';
+    const isSafari =
+      typeof navigator !== 'undefined' &&
+      /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    if (isSafari) {
+      return 'Não foi possível conectar ao Supabase pelo Safari. Desative bloqueadores/Private Relay para este site, teste em uma janela normal e tente novamente.';
+    }
+
+    return 'Erro de conexão ao acessar o Supabase. Verifique sua internet e as variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build de produção.';
   }
   return message;
 }
@@ -133,6 +142,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       error = result.error;
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Falha ao conectar ao servidor de autenticação.';
+      console.error('Erro de conexão no login Supabase:', e);
       throw new Error(normalizeAuthError(msg));
     }
     if (error) {

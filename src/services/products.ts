@@ -1,6 +1,14 @@
-import { supabase } from '@/lib/supabase';
+import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import { mapProduct } from './mappers';
 import type { Product } from '@/types';
+
+function assertSupabaseConfigured() {
+  if (!isSupabaseConfigured()) {
+    throw new Error(
+      'Supabase não configurado. Crie um arquivo .env com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY e reinicie o servidor.'
+    );
+  }
+}
 
 export async function fetchProducts(filters?: {
   importadoraId?: string;
@@ -50,6 +58,8 @@ export async function createProduct(input: {
   detalhe3?: string;
   dimensions?: string;
 }): Promise<Product> {
+  assertSupabaseConfigured();
+
   const { data, error } = await supabase
     .from('products')
     .insert({
@@ -95,6 +105,8 @@ export async function updateProduct(
     dimensions: string;
   }>
 ): Promise<Product> {
+  assertSupabaseConfigured();
+
   const db: Record<string, unknown> = {};
   if (updates.name != null) db.name = updates.name;
   if (updates.description != null) db.description = updates.description;
@@ -121,6 +133,8 @@ export async function updateProduct(
 }
 
 export async function deleteProduct(id: string): Promise<void> {
+  assertSupabaseConfigured();
+
   const { error } = await supabase.from('products').delete().eq('id', id);
   if (error) throw error;
 }
