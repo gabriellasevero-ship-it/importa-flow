@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getProfile, ensureProfile } from '@/services/profile';
-import { isSupabaseConfigured } from '@/lib/supabase';
+import { getConfiguredSupabaseHost, isSupabaseConfigured } from '@/lib/supabase';
 import { createRepresentative } from '@/services/representantes';
 
 interface AuthContextType {
@@ -23,6 +23,13 @@ interface AuthContextType {
 /** Traduz mensagens comuns do Supabase Auth para o usuário */
 function normalizeAuthError(message: string): string {
   const lower = message.toLowerCase();
+
+  if (lower.includes('esgotado ao entrar')) {
+    return (
+      'O login passou do tempo limite sem resposta do Supabase. Tente de novo; se repetir, confira no painel do Supabase se o projeto está ativo (não pausado), teste outra rede ou 4G e, na hospedagem (ex.: Vercel), se VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY existiam no momento do build — alterar variáveis exige um novo deploy.'
+    );
+  }
+
   if (lower.includes('invalid login credentials') || lower.includes('invalid_credentials')) {
     return 'E-mail ou senha incorretos. Tente novamente.';
   }
@@ -44,13 +51,15 @@ function normalizeAuthError(message: string): string {
       return 'Não foi possível conectar ao Supabase pelo Safari. Desative bloqueadores/Private Relay para este site, teste em uma janela normal e tente novamente.';
     }
 
-    return 'Erro de conexão ao acessar o Supabase. Verifique sua internet e as variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build de produção.';
+    return (
+      'Não foi possível alcançar o Supabase (rede ou bloqueio no navegador). Confira sua internet e extensões; no painel da hospedagem confirme VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build e faça redeploy se tiver alterado as variáveis. No Supabase (Authentication → URL Configuration), inclua a URL exata do site em Redirect URLs.'
+    );
   }
   return message;
 }
 
 /** Evita spinner infinito se a API do Supabase não responder (rede, URL errada no deploy, etc.) */
-const LOGIN_TIMEOUT_MS = 15000;
+const LOGIN_TIMEOUT_MS = 22000;
 const PROFILE_TIMEOUT_MS = 8000;
 
 function rejectAfter(ms: number, message: string): Promise<never> {
@@ -133,16 +142,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const result = await Promise.race([
         supabase.auth.signInWithPassword({ email, password }),
-        rejectAfter(
-          LOGIN_TIMEOUT_MS,
-          'Tempo de conexão esgotado ao entrar. Verifique a internet e se VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY estão corretos no build de produção.'
-        ),
+        rejectAfter(LOGIN_TIMEOUT_MS, 'Tempo de conexão esgotado ao entrar.'),
       ]);
       data = result.data;
       error = result.error;
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Falha ao conectar ao servidor de autenticação.';
-      console.error('Erro de conexão no login Supabase:', e);
+      console.error('Erro de conexão no login Supabase:', e, {
+        supabaseHost: getConfiguredSupabaseHost(),
+        production: import.meta.env.PROD,
+      });
       throw new Error(normalizeAuthError(msg));
     }
     if (error) {

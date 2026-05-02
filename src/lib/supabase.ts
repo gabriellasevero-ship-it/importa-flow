@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+/** trim evita falhas no fetch quando o valor vem com espaço ou quebra de linha do painel da hospedagem */
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
 // Em modo desenvolvimento/demo, o projeto pode ser usado sem Supabase configurado.
 // Antes, chamávamos createClient com strings vazias, o que fazia a app quebrar
@@ -59,4 +60,14 @@ export const supabase = createClient(
 
 export function isSupabaseConfigured(): boolean {
   return !!(supabaseUrl && supabaseAnonKey);
+}
+
+/** Só para diagnóstico em console (ex.: login em produção); não expõe segredos */
+export function getConfiguredSupabaseHost(): string | null {
+  if (!supabaseUrl) return null;
+  try {
+    return new URL(supabaseUrl).host;
+  } catch {
+    return null;
+  }
 }
