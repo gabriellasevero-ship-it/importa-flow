@@ -114,6 +114,7 @@ export async function createRepresentative(input: {
     };
   }
 
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('representantes')
     .insert({
@@ -148,6 +149,7 @@ export async function updateRepresentative(
   if (updates.status != null) db.status = updates.status;
   if (updates.totalSales !== undefined) db.total_sales = updates.totalSales ?? null;
 
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('representantes')
     .update(db)
@@ -162,6 +164,7 @@ export async function updateRepresentativeStatus(
   id: string,
   status: RepresentativeStatus
 ): Promise<Representative> {
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('representantes')
     .update({ status })
@@ -173,6 +176,7 @@ export async function updateRepresentativeStatus(
 }
 
 export async function deleteRepresentative(id: string): Promise<void> {
+  await syncAuthBeforeDbRead();
   const { error } = await supabase.from('representantes').delete().eq('id', id);
   if (error) throw error;
 }

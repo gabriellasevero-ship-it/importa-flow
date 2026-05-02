@@ -45,6 +45,15 @@ import {
 } from '@/services/representantes';
 import { useImportadoras } from '@/hooks/useData';
 
+function messageFromUnknownError(e: unknown): string {
+  if (e instanceof Error && e.message.trim()) return e.message.trim();
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = (e as { message: unknown }).message;
+    if (typeof m === 'string' && m.trim()) return m.trim();
+  }
+  return '';
+}
+
 const statusConfig = {
   active: {
     label: 'Ativa',
@@ -181,7 +190,12 @@ export const Representatives: React.FC = () => {
         setShowDialog(false);
       } catch (e) {
         console.error(e);
-        toast.error('Não foi possível salvar o representante.');
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível salvar o representante. ${detail}`
+            : 'Não foi possível salvar o representante.'
+        );
       } finally {
         setLoading(false);
       }
