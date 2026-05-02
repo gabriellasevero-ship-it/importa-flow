@@ -1,17 +1,26 @@
 import * as pdfjsLib from 'pdfjs-dist';
 // Worker para processamento em background (evita travar a UI)
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { findOrderedUniqueSkuMatches } from '@/lib/catalogParser';
+import { findOrderedUniqueSkuMatches, type CatalogParseLineMeta } from '@/lib/catalogParser';
 
 if (typeof pdfjsWorker === 'string') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 }
 
+type ViewportLike = { transform: number[]; width: number; height: number };
+
 const PAGE_IMAGE_SCALE = 1.5;
 const PAGE_IMAGE_JPEG_QUALITY = 0.85;
 const OCR_TIMEOUT_MS = 20_000;
 
-type PdfTextItem = { str: string; hasEOL?: boolean; transform: number[]; width?: number };
+type PdfTextItem = {
+  str: string;
+  hasEOL?: boolean;
+  transform: number[];
+  width?: number;
+  height?: number;
+  fontName?: string;
+};
 
 function isPdfTextItem(item: unknown): item is PdfTextItem {
   return (
@@ -22,6 +31,21 @@ function isPdfTextItem(item: unknown): item is PdfTextItem {
     typeof (item as { str: unknown }).str === 'string' &&
     Array.isArray((item as { transform: unknown }).transform) &&
     (item as { transform: number[] }).transform.length >= 6
+  );
+}
+
+function pdfRunFontHeightInViewport(viewport: ViewportLike, transform: number[]): number {
+  const tx = pdfjsLib.Util.transform(viewport.transform, transform);
+  return Math.hypot(tx[0], tx[1]) || 1;
+}
+
+function isBoldFontName(fontName: string | undefined): boolean {
+  if (!fontName) return false;
+  const n = fontName.replace(/[\s-]/g, '').toLowerCase();
+  return (
+    /bold|black|heavy|semibold|demibold|negrito/.test(n) ||
+    (n.includes('noto') && n.includes('bold')) ||
+    (n.includes('arial') && n.includes('bold'))
   );
 }
 
@@ -69,7 +93,76 @@ export function buildPageTextFromPdfItems(items: readonly unknown[]): string {
   return lineStrings.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-type ViewportLike = { transform: number[]; width: number; height: number };
+/**
+ * Linhas na mesma ordem que {@link buildPageTextFromPdfItems}, com altura de fonte no viewport e negrito.
+ */
+export function buildPageTextLineMetaList(
+  viewport: ViewportLike,
+  items: readonly unknown[]
+): CatalogParseLineMeta[] {
+  type Run = {
+    str: string;
+    x: number;
+    y: number;
+    w: number;
+    hasEOL?: boolean;
+    fontHeight: number;
+    isBold: boolean;
+  };
+  const positioned: Run[] = [];
+  for (const item of items) {
+    if (!isPdfTextItem(item)) continue;
+    const s = item.str;
+    if (!s || !s.trim()) continue;
+    const t = item.transform;
+    const w = typeof item.width === 'number' && item.width > 0 ? item.width : s.length * 4.5;
+    positioned.push({
+      str: s,
+      x: t[4],
+      y: t[5],
+      w,
+      hasEOL: item.hasEOL,
+      fontHeight: pdfRunFontHeightInViewport(viewport, t),
+      isBold: isBoldFontName(item.fontName),
+    });
+  }
+  if (positioned.length === 0) return [];
+
+  const sortedByY = [...positioned].sort((a, b) => b.y - a.y);
+  const yTolerance = 6;
+  const lines: Run[][] = [];
+  for (const p of sortedByY) {
+    const lastLine = lines[lines.length - 1];
+    if (lastLine && Math.abs(lastLine[0].y - p.y) < yTolerance) {
+      lastLine.push(p);
+    } else {
+      lines.push([p]);
+    }
+  }
+
+  const metas: CatalogParseLineMeta[] = [];
+  for (const line of lines) {
+    line.sort((a, b) => a.x - b.x);
+    let acc = '';
+    let maxH = 0;
+    let anyBold = false;
+    for (let i = 0; i < line.length; i++) {
+      const cur = line[i];
+      const prev = line[i - 1];
+      const gap = prev ? cur.x - (prev.x + prev.w) : 0;
+      if (prev && gap > 2) acc += ' ';
+      acc += cur.str;
+      maxH = Math.max(maxH, cur.fontHeight);
+      if (cur.isBold) anyBold = true;
+      if (cur.hasEOL) acc += '\n';
+    }
+    const text = acc.trimEnd();
+    if (text.length > 0) {
+      metas.push({ text, fontHeight: maxH || 1, isBold: anyBold });
+    }
+  }
+  return metas;
+}
 
 type PositionedRun = {
   str: string;
@@ -277,6 +370,22 @@ export function equalVerticalCropFracs(count: number): { topFrac: number; bottom
   }));
 }
 
+/** Faixas verticais iguais dentro de uma banda [topFrac, bottomFrac] (ex.: caixa de texto da página). */
+export function equalVerticalCropFracsInBand(
+  count: number,
+  bandTopFrac: number,
+  bandBottomFrac: number
+): { topFrac: number; bottomFrac: number }[] {
+  if (count <= 0) return [];
+  const t0 = Math.max(0, Math.min(1, bandTopFrac));
+  const t1 = Math.max(t0, Math.min(1, bandBottomFrac));
+  const h = t1 - t0;
+  return Array.from({ length: count }, (_, i) => ({
+    topFrac: t0 + (h * i) / count,
+    bottomFrac: t0 + (h * (i + 1)) / count,
+  }));
+}
+
 export async function cropImageBlobVertical(
   blob: Blob,
   topFrac: number,
@@ -295,6 +404,99 @@ export async function cropImageBlobVertical(
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.drawImage(bmp, 0, sy, bmp.width, sh, 0, 0, bmp.width, sh);
+    return await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', quality);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export type PageContentBoundsFracs = {
+  topFrac: number;
+  bottomFrac: number;
+  leftFrac: number;
+  rightFrac: number;
+};
+
+/**
+ * União aproximada dos retângulos de texto (viewport em px) → frações 0–1 para recorte do JPEG da página.
+ */
+export function computePageTextUnionBoundsFracs(
+  viewport: ViewportLike,
+  items: readonly unknown[],
+  pageWidthPx: number,
+  pageHeightPx: number,
+  marginPx = 14
+): PageContentBoundsFracs | null {
+  const W = Math.max(1, pageWidthPx);
+  const H = Math.max(1, pageHeightPx);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let any = false;
+  for (const item of items) {
+    if (!isPdfTextItem(item)) continue;
+    const s = item.str;
+    if (!s || !s.trim()) continue;
+    const t = item.transform;
+    const m = pdfjsLib.Util.transform(viewport.transform, t);
+    const fs = Math.hypot(m[0], m[1]) || 1;
+    const textW =
+      typeof item.width === 'number' && item.width > 0 ? item.width : Math.max(s.length * 0.5, 0.5);
+    const dx = textW * m[0];
+    const dy = textW * m[1];
+    const x0 = m[4];
+    const y0 = m[5];
+    const x1 = x0 + dx;
+    const ascent = fs * 0.85;
+    const descent = fs * 0.35;
+    const yTop = y0 - ascent;
+    const yBot = y0 + descent;
+    any = true;
+    minX = Math.min(minX, x0, x1);
+    maxX = Math.max(maxX, x0, x1);
+    minY = Math.min(minY, yTop, yBot, y0);
+    maxY = Math.max(maxY, yTop, yBot, y0);
+  }
+  if (!any) return null;
+  const pad = marginPx;
+  const l = Math.max(0, (minX - pad) / W);
+  const r = Math.min(1, (maxX + pad) / W);
+  const top = Math.max(0, (minY - pad) / H);
+  const bot = Math.min(1, (maxY + pad) / H);
+  if (r <= l || bot <= top) return null;
+  return { leftFrac: l, rightFrac: r, topFrac: top, bottomFrac: bot };
+}
+
+/**
+ * Recorte retangular (frações 0–1) sobre o blob de imagem da página.
+ */
+export async function cropImageBlobRect(
+  blob: Blob,
+  leftFrac: number,
+  topFrac: number,
+  rightFrac: number,
+  bottomFrac: number,
+  quality = PAGE_IMAGE_JPEG_QUALITY
+): Promise<Blob | null> {
+  const l = Math.max(0, Math.min(1, leftFrac));
+  const t = Math.max(0, Math.min(1, topFrac));
+  const r = Math.max(l, Math.min(1, rightFrac));
+  const b = Math.max(t, Math.min(1, bottomFrac));
+  try {
+    const bmp = await createImageBitmap(blob);
+    const sx = Math.floor(l * bmp.width);
+    const sy = Math.floor(t * bmp.height);
+    const sw = Math.max(1, Math.ceil(r * bmp.width) - sx);
+    const sh = Math.max(1, Math.ceil(b * bmp.height) - sy);
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
     return await new Promise<Blob | null>((resolve) => {
       canvas.toBlob(resolve, 'image/jpeg', quality);
     });
@@ -418,6 +620,10 @@ export async function extractTextAndPageImages(
   pageBlobs: Blob[];
   ocrPageCount: number;
   pageSkuVerticalBands: SkuVerticalBand[][];
+  /** Sempre do texto nativo do PDF (útil para título por tamanho de fonte); não reflete OCR. */
+  pageLineMetas: CatalogParseLineMeta[][];
+  /** Caixa de união do texto (nativo) em frações da página; null se sem texto posicionado. */
+  pageTextBoundsFracs: (PageContentBoundsFracs | null)[];
 }> {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -425,6 +631,8 @@ export async function extractTextAndPageImages(
   const pageTexts: string[] = [];
   const pageBlobs: Blob[] = [];
   const pageSkuVerticalBands: SkuVerticalBand[][] = [];
+  const pageLineMetas: CatalogParseLineMeta[][] = [];
+  const pageTextBoundsFracs: (PageContentBoundsFracs | null)[] = [];
   let ocrPageCount = 0;
   let ocrStartNotified = false;
   const notifyOcrStartingOnce = () => {
@@ -439,6 +647,10 @@ export async function extractTextAndPageImages(
     let pageText = buildPageTextFromPdfItems(textContent.items);
 
     const viewport = page.getViewport({ scale: PAGE_IMAGE_SCALE });
+    pageLineMetas.push(buildPageTextLineMetaList(viewport, textContent.items));
+    pageTextBoundsFracs.push(
+      computePageTextUnionBoundsFracs(viewport, textContent.items, viewport.width, viewport.height)
+    );
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -467,5 +679,5 @@ export async function extractTextAndPageImages(
     options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
   }
 
-  return { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands };
+  return { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands, pageLineMetas, pageTextBoundsFracs };
 }

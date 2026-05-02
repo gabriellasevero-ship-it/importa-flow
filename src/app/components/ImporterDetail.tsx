@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import {
+  cropImageBlobRect,
   cropImageBlobVertical,
   equalVerticalCropFracs,
+  equalVerticalCropFracsInBand,
   extractTextAndPageImages,
 } from '@/lib/pdfUtils';
 import { parseCatalogText } from '@/lib/catalogParser';
-import { useProducts, useRepresentatives } from '@/hooks/useData';
+import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
 import { uploadCatalogPageImage } from '@/services/storage';
 import type { Product as ApiProduct } from '@/types';
@@ -95,6 +97,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     importadoraId: importer.id,
   });
   const { representatives } = useRepresentatives();
+  const { categories: apiCategories } = useCategories();
+  const categoryNames = useMemo(() => apiCategories.map((c) => c.name), [apiCategories]);
   const products = apiProducts.map(apiProductToLocal);
   const linkedRepresentatives = representatives
     .filter((r) => r.importerId === importer.id)
@@ -346,24 +350,31 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     setCatalogProcessing(true);
     setCatalogProgress(null);
     try {
-      const { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands } = await extractTextAndPageImages(
-        uploadedFile,
-        {
-          onOcrStarting: () => {
-            toast.info('Usando OCR no catálogo', {
-              description:
-                'Algumas páginas têm pouco texto selecionável; estamos lendo a imagem. Pode levar mais alguns instantes.',
-              duration: 10_000,
-            });
-          },
-          onPageProcessed: ({ currentPage, totalPages }) => {
-            setCatalogProgress({ currentPage, totalPages });
-          },
-        }
-      );
+      const {
+        pageTexts,
+        pageBlobs,
+        ocrPageCount,
+        pageSkuVerticalBands,
+        pageLineMetas,
+        pageTextBoundsFracs,
+      } = await extractTextAndPageImages(uploadedFile, {
+        onOcrStarting: () => {
+          toast.info('Usando OCR no catálogo', {
+            description:
+              'Algumas páginas têm pouco texto selecionável; estamos lendo a imagem. Pode levar mais alguns instantes.',
+            duration: 10_000,
+          });
+        },
+        onPageProcessed: ({ currentPage, totalPages }) => {
+          setCatalogProgress({ currentPage, totalPages });
+        },
+      });
       const itemsWithPage: Array<ReturnType<typeof parseCatalogText>[number] & { pageIndex: number }> = [];
       for (let i = 0; i < pageTexts.length; i++) {
-        const pageItems = parseCatalogText(pageTexts[i]);
+        const pageItems = parseCatalogText(pageTexts[i], {
+          lineMeta: pageLineMetas[i],
+          categoryNames,
+        });
         pageItems.forEach((item) => itemsWithPage.push({ ...item, pageIndex: i }));
       }
       if (itemsWithPage.length === 0) {
@@ -397,18 +408,40 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
       const cropByItem = new Map<
         (typeof itemsWithPage)[number],
-        { top: number; bottom: number }
+        { top: number; bottom: number; left?: number; right?: number }
       >();
       for (const [pIdx, list] of itemsByPage) {
-        if (list.length <= 1) continue;
+        const bounds = pageTextBoundsFracs[pIdx];
         const bands = pageSkuVerticalBands[pIdx] ?? [];
-        const equal = equalVerticalCropFracs(list.length);
+        if (list.length === 1) {
+          if (bounds) {
+            cropByItem.set(list[0], {
+              top: bounds.topFrac,
+              bottom: bounds.bottomFrac,
+              left: bounds.leftFrac,
+              right: bounds.rightFrac,
+            });
+          }
+          continue;
+        }
+        const equalInPage = bounds
+          ? equalVerticalCropFracsInBand(list.length, bounds.topFrac, bounds.bottomFrac)
+          : equalVerticalCropFracs(list.length);
         list.forEach((item, slot) => {
           const bySku = bands.find((b) => b.sku === item.code);
+          const horiz = bounds ? { left: bounds.leftFrac, right: bounds.rightFrac } : {};
           if (bySku) {
-            cropByItem.set(item, { top: bySku.topFrac, bottom: bySku.bottomFrac });
-          } else if (equal[slot]) {
-            cropByItem.set(item, { top: equal[slot].topFrac, bottom: equal[slot].bottomFrac });
+            cropByItem.set(item, {
+              top: bySku.topFrac,
+              bottom: bySku.bottomFrac,
+              ...horiz,
+            });
+          } else if (equalInPage[slot]) {
+            cropByItem.set(item, {
+              top: equalInPage[slot].topFrac,
+              bottom: equalInPage[slot].bottomFrac,
+              ...horiz,
+            });
           }
         });
       }
@@ -425,7 +458,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         let blob: Blob | undefined = pageBlob;
         const crop = cropByItem.get(item);
         if (crop && pageBlob) {
-          const cropped = await cropImageBlobVertical(pageBlob, crop.top, crop.bottom);
+          let cropped: Blob | null = null;
+          if (crop.left != null && crop.right != null) {
+            cropped = await cropImageBlobRect(pageBlob, crop.left, crop.top, crop.right, crop.bottom);
+          }
+          if (!cropped) {
+            cropped = await cropImageBlobVertical(pageBlob, crop.top, crop.bottom);
+          }
           if (cropped) blob = cropped;
         }
         const samePage = itemsByPage.get(item.pageIndex) ?? [item];
@@ -454,6 +493,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           minOrder: item.minOrder,
           material: item.material || undefined,
           dimensions: item.dimensions || undefined,
+          description: item.description,
           active: true,
           image: imageUrl,
         });
