@@ -62,6 +62,12 @@ export function isSupabaseConfigured(): boolean {
   return !!(supabaseUrl && supabaseAnonKey);
 }
 
+/** Garante que a sessão em memória/storage foi lida antes do 1º SELECT (evita JWT ausente no 1º request). */
+export async function syncAuthBeforeDbRead(): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  await supabase.auth.getSession();
+}
+
 /** Só para diagnóstico em console (ex.: login em produção); não expõe segredos */
 export function getConfiguredSupabaseHost(): string | null {
   if (!supabaseUrl) return null;

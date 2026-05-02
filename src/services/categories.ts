@@ -1,8 +1,9 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, syncAuthBeforeDbRead } from '@/lib/supabase';
 import { mapCategory } from './mappers';
 import type { Category } from '@/types';
 
 export async function fetchCategories(): Promise<Category[]> {
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('categories')
     .select('*')

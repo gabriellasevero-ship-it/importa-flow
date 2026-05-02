@@ -179,7 +179,7 @@ export const Importers: React.FC = () => {
           refetch();
           setViewingImporter({
             ...updatedImporter,
-            productsCount: getProductsCount(updatedImporter.id),
+            productsCount: updatedImporter.productsCount,
           });
         }}
         onDelete={async (importerId) => {

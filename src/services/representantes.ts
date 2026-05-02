@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured, syncAuthBeforeDbRead } from '@/lib/supabase';
 
 export type RepresentativeStatus = 'active' | 'pending' | 'suspended';
 
@@ -75,6 +75,7 @@ export async function fetchRepresentatives(): Promise<Representative[]> {
   if (!isSupabaseConfigured()) {
     return [...DEMO_REPRESENTATIVES];
   }
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('representantes')
     .select('*')

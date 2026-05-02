@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import {
   cropImageBlobVertical,
@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/app/components/ui/select';
+import { Checkbox } from '@/app/components/ui/checkbox';
 
 interface Product {
   id: string;
@@ -98,7 +99,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const linkedRepresentatives = representatives
     .filter((r) => r.importerId === importer.id)
     .map((r) => ({ id: r.id, name: r.name, email: r.email, status: r.status }));
-  const [activeTab, setActiveTab] = useState('info');
+  const [activeTab, setActiveTab] = useState('products');
   const [showProductDialog, setShowProductDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showCatalogUploadDialog, setShowCatalogUploadDialog] = useState(false);
@@ -113,7 +114,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [catalogProgress, setCatalogProgress] = useState<{ currentPage: number; totalPages: number } | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [productSaving, setProductSaving] = useState(false);
-  
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleteMode, setBulkDeleteMode] = useState<'selected' | 'all' | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showProductDeleteOptions, setShowProductDeleteOptions] = useState(false);
+
   // Estados Financeiros (novas importadoras vêm com plano free e pagamento em dia)
   const [financialData, setFinancialData] = useState({
     plan: 'free' as 'free' | 'basic' | 'pro',
@@ -140,6 +145,28 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     dimensions: '',
     published: true,
   });
+
+  useEffect(() => {
+    if (activeTab !== 'products') {
+      setShowProductDeleteOptions(false);
+      setSelectedProductIds(new Set());
+      setBulkDeleteMode(null);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const valid = new Set(apiProducts.map((p) => p.id));
+    setSelectedProductIds((prev) => {
+      const next = new Set<string>();
+      let changed = false;
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      });
+      if (!changed && next.size === prev.size) return prev;
+      return next;
+    });
+  }, [apiProducts]);
 
   const getProductSaveErrorMessage = (error: unknown) => {
     if (!error || typeof error !== 'object') {
@@ -282,7 +309,18 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       setDeletingProduct(null);
       setShowProductDialog(false);
       setEditingProduct(null);
-      await refetchProducts();
+      setSelectedProductIds((prev) => {
+        if (!prev.has(target.id)) return prev;
+        const next = new Set(prev);
+        next.delete(target.id);
+        return next;
+      });
+      const updatedList = await refetchProducts();
+      setImporter((prev) => {
+        const next = { ...prev, productsCount: updatedList.length };
+        onUpdate(next);
+        return next;
+      });
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível excluir o produto.');
@@ -470,12 +508,83 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     toast.success('Dados financeiros atualizados com sucesso!');
   };
 
-  const filteredProducts = products.filter((product) =>
-    product.code.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    (product.category || '').toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    (product.material || '').toLowerCase().includes(productSearchTerm.toLowerCase())
+  const filteredProducts = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          product.code.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          product.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          (product.category || '').toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          (product.material || '').toLowerCase().includes(productSearchTerm.toLowerCase())
+      ),
+    [products, productSearchTerm]
   );
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = filteredProducts.map((p) => p.id);
+    const allVisibleSelected =
+      visibleIds.length > 0 && visibleIds.every((id) => selectedProductIds.has(id));
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (!bulkDeleteMode) return;
+    setBulkDeleting(true);
+    try {
+      if (bulkDeleteMode === 'all') {
+        await productsApi.deleteProductsByImportadoraId(importer.id);
+        toast.success('Todos os produtos foram excluídos.');
+      } else {
+        const ids = Array.from(selectedProductIds);
+        if (ids.length === 0) {
+          toast.error('Nenhum produto selecionado.');
+          setBulkDeleteMode(null);
+          return;
+        }
+        await productsApi.deleteProductsByIds(ids);
+        toast.success(
+          ids.length === 1 ? '1 produto excluído.' : `${ids.length} produtos excluídos.`
+        );
+      }
+      const updatedList = await refetchProducts();
+      setSelectedProductIds(new Set());
+      setBulkDeleteMode(null);
+      setShowProductDeleteOptions(false);
+      setImporter((prev) => {
+        const next = { ...prev, productsCount: updatedList.length };
+        onUpdate(next);
+        return next;
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir os produtos.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleProductDeleteOptions = () => {
+    setShowProductDeleteOptions((prev) => {
+      if (prev) {
+        setSelectedProductIds(new Set());
+        setBulkDeleteMode(null);
+      }
+      return !prev;
+    });
+  };
+
+  const visibleIds = filteredProducts.map((p) => p.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedProductIds.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedProductIds.has(id));
 
   return (
     <div className="space-y-6">
@@ -594,7 +703,25 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 Gerencie os produtos desta importadora
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className={
+                  showProductDeleteOptions
+                    ? ''
+                    : 'text-destructive border-destructive/40 hover:bg-destructive/10'
+                }
+                onClick={toggleProductDeleteOptions}
+                disabled={products.length === 0 && !showProductDeleteOptions}
+              >
+                {showProductDeleteOptions ? (
+                  <X className="w-4 h-4 mr-2" />
+                ) : (
+                  <Trash2 className="w-4 h-4 mr-2" />
+                )}
+                {showProductDeleteOptions ? 'Cancelar exclusão' : 'Excluir produtos'}
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setShowCatalogUploadDialog(true)}
@@ -625,6 +752,48 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             </div>
           )}
 
+          {products.length > 0 && showProductDeleteOptions && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="select-visible-products"
+                  checked={
+                    allVisibleSelected
+                      ? true
+                      : someVisibleSelected
+                        ? 'indeterminate'
+                        : false
+                  }
+                  onCheckedChange={() => toggleSelectAllVisible()}
+                  disabled={filteredProducts.length === 0}
+                />
+                <label
+                  htmlFor="select-visible-products"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Selecionar visíveis
+                </label>
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {selectedProductIds.size} selecionado(s)
+              </span>
+              <div className="flex flex-wrap gap-2 sm:ml-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                  disabled={selectedProductIds.size === 0}
+                  onClick={() => setBulkDeleteMode('selected')}
+                >
+                  Excluir selecionados
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => setBulkDeleteMode('all')}>
+                  Excluir todos os produtos
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Lista de Produtos */}
           {productsLoading && products.length === 0 ? (
             <Card className="p-12">
@@ -641,6 +810,22 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 <Card key={product.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-4">
+                      {showProductDeleteOptions && (
+                        <Checkbox
+                          className="shrink-0"
+                          checked={selectedProductIds.has(product.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedProductIds((prev) => {
+                              const next = new Set(prev);
+                              if (checked === true) next.add(product.id);
+                              else next.delete(product.id);
+                              return next;
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Selecionar ${product.code}`}
+                        />
+                      )}
                       {/* Imagem do Produto */}
                       <div className="relative w-20 h-20 shrink-0 rounded-lg overflow-hidden bg-muted group cursor-pointer">
                         {product.image ? (
@@ -1277,6 +1462,57 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             </Button>
             <Button onClick={handleDeleteProduct} variant="destructive">
               Sim, Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={bulkDeleteMode !== null}
+        onOpenChange={(open) => {
+          if (!open && !bulkDeleting) setBulkDeleteMode(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {bulkDeleteMode === 'all'
+                ? 'Excluir todo o catálogo?'
+                : 'Excluir produtos selecionados?'}
+            </DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita</DialogDescription>
+          </DialogHeader>
+          <div className="py-4 text-sm text-muted-foreground space-y-2">
+            {bulkDeleteMode === 'all' ? (
+              <p>
+                Todos os produtos desta importadora serão removidos, inclusive os que não aparecem
+                no resultado da busca atual.
+              </p>
+            ) : (
+              <p>
+                Você está prestes a excluir{' '}
+                <span className="font-semibold text-foreground">{selectedProductIds.size}</span>{' '}
+                produto(s).
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkDeleteMode(null)}
+              disabled={bulkDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmBulkDelete} disabled={bulkDeleting}>
+              {bulkDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Confirmar exclusão'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

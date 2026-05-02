@@ -101,20 +101,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      // Não use await no handler síncrono: o auth-js usa Web Locks; trabalho async aqui
-      // pode travar signInWithPassword até estourar timeout (supabase-js#2013 / PR notify subscribers).
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // INITIAL_SESSION já é coberto por getSession() abaixo; tratar de novo pode competir e zerar o user.
+      if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+        return;
+      }
+      // Não use await no handler síncrono: o auth-js usa Web Locks (supabase-js#2013).
       window.setTimeout(() => {
         void (async () => {
           try {
             if (session?.user) {
               await loadUser(session.user.id);
-            } else {
+            } else if (event === 'SIGNED_OUT') {
               setUser(null);
             }
           } catch (err) {
             console.error('Erro ao sincronizar sessão:', err);
-            setUser(null);
           }
         })();
       }, 0);

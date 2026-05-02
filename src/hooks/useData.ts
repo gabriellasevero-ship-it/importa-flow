@@ -55,14 +55,16 @@ export function useCategories() {
 export function useProducts(filters?: { importadoraId?: string; category?: string; active?: boolean }) {
   const [list, setList] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (): Promise<Product[]> => {
     setLoading(true);
     try {
       const data = await productsApi.fetchProducts(filters);
       setList(data);
+      return data;
     } catch (e) {
       console.error(e);
       setList([]);
+      return [];
     } finally {
       setLoading(false);
     }

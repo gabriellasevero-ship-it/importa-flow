@@ -1,8 +1,9 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, syncAuthBeforeDbRead } from '@/lib/supabase';
 import { mapImportadora } from './mappers';
 import type { Importadora } from '@/types';
 
 export async function fetchImportadoras(): Promise<Importadora[]> {
+  await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('importadoras')
     .select('*')

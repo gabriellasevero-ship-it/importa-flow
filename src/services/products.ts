@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { isSupabaseConfigured, supabase, syncAuthBeforeDbRead } from '@/lib/supabase';
 import { mapProduct } from './mappers';
 import type { Product } from '@/types';
 
@@ -15,6 +15,7 @@ export async function fetchProducts(filters?: {
   category?: string;
   active?: boolean;
 }): Promise<Product[]> {
+  await syncAuthBeforeDbRead();
   let q = supabase
     .from('products')
     .select('*, importadoras(name)')
@@ -136,5 +137,28 @@ export async function deleteProduct(id: string): Promise<void> {
   assertSupabaseConfigured();
 
   const { error } = await supabase.from('products').delete().eq('id', id);
+  if (error) throw error;
+}
+
+const DELETE_BY_IDS_CHUNK = 150;
+
+export async function deleteProductsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  assertSupabaseConfigured();
+
+  for (let i = 0; i < ids.length; i += DELETE_BY_IDS_CHUNK) {
+    const chunk = ids.slice(i, i + DELETE_BY_IDS_CHUNK);
+    const { error } = await supabase.from('products').delete().in('id', chunk);
+    if (error) throw error;
+  }
+}
+
+export async function deleteProductsByImportadoraId(importadoraId: string): Promise<void> {
+  assertSupabaseConfigured();
+
+  const { error } = await supabase
+    .from('products')
+    .delete()
+    .eq('importadora_id', importadoraId);
   if (error) throw error;
 }
