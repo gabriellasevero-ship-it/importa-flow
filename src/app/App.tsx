@@ -24,6 +24,20 @@ import { Transportadoras } from '@/app/components/Transportadoras';
 import { Product } from '@/types';
 import { Sidebar } from '@/app/components/Sidebar';
 import { MoreMenu } from '@/app/components/MoreMenu';
+import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
+
+function parseCatalogRoute(pathname: string): { linkId: string; representanteId: string } {
+  const prefix = '/catalogo/';
+  if (!pathname.startsWith(prefix)) {
+    return { linkId: '', representanteId: 'rep-1' };
+  }
+  const raw = pathname.slice(prefix.length).replace(/\/+$/, '');
+  const first = raw.split('/')[0] ?? '';
+  if (CATALOG_PATH_UUID_RE.test(first)) {
+    return { representanteId: first, linkId: raw || first };
+  }
+  return { representanteId: 'rep-1', linkId: raw || 'legacy' };
+}
 
 function ClientCatalogEntry({ linkId, representanteId }: { linkId: string; representanteId: string }) {
   const { addCliente } = useCatalogClients();
@@ -67,14 +81,15 @@ function AppContent() {
 
   // Check if accessing via client catalog link
   const isClientCatalogView = window.location.pathname.startsWith('/catalogo/');
-  const catalogLinkId = isClientCatalogView ? window.location.pathname.split('/catalogo/')[1] : null;
+  const catalogPath = isClientCatalogView ? window.location.pathname.split('/catalogo/')[1] : null;
 
   // Check if accessing via client order link
   const isClientOrderView = window.location.pathname.startsWith('/pedido/');
   const orderLinkId = isClientOrderView ? window.location.pathname.split('/pedido/')[1] : null;
 
-  if (isClientCatalogView && catalogLinkId) {
-    return <ClientCatalogEntry linkId={catalogLinkId} representanteId="rep-1" />;
+  if (isClientCatalogView && catalogPath) {
+    const { linkId, representanteId } = parseCatalogRoute(window.location.pathname);
+    return <ClientCatalogEntry linkId={linkId} representanteId={representanteId} />;
   }
 
   if (isClientOrderView && orderLinkId) {

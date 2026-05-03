@@ -18,15 +18,15 @@ import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
 import { buildWhatsAppUrl } from '@/lib/whatsapp';
+import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
 import { fetchRepresentativeById } from '@/services/representantes';
 import { toast } from 'sonner';
 import { Truck } from 'lucide-react';
 
-const REPRESENTANTE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 interface RepresentanteInfo {
   id: string;
+  /** `profiles.id` do representante (para pedidos alinhados ao banco). */
+  profileId?: string;
   name: string;
   email: string;
   phone: string;
@@ -36,6 +36,7 @@ interface RepresentanteInfo {
 const MOCK_REPRESENTANTES: Record<string, RepresentanteInfo> = {
   'rep-1': {
     id: 'rep-1',
+    profileId: undefined,
     name: 'Maria Silva',
     email: 'maria.silva@exemplo.com',
     phone: '(11) 98765-4321',
@@ -58,7 +59,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   );
 
   useEffect(() => {
-    if (!REPRESENTANTE_UUID_RE.test(representanteId)) {
+    if (!CATALOG_PATH_UUID_RE.test(representanteId)) {
       setRepresentante(defaultRepresentanteInfo(representanteId));
       return;
     }
@@ -69,6 +70,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
         if (cancelled || !r) return;
         setRepresentante({
           id: r.id,
+          profileId: r.userId || undefined,
           name: r.name,
           email: r.email,
           phone: r.phone,
@@ -235,7 +237,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
 
       return {
         id: `PED${Date.now()}-${Math.random().toString(36).substring(7)}`,
-        representanteId,
+        representanteId: representante.profileId ?? representanteId,
         representanteName: representante.name,
         clienteId: client!.id,
         clienteName: client!.name,
@@ -1113,8 +1115,9 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                       state: '',
                     });
                     toast.success('Cadastro realizado com sucesso!');
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erro ao cadastrar');
+                  } catch (error: unknown) {
+                    const e = error as { message?: string; details?: string };
+                    toast.error(e.details || e.message || 'Erro ao cadastrar');
                   }
                 }}
                 className="flex-1 bg-primary"

@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Cliente } from '@/types';
+import { isSupabaseConfigured } from '@/lib/supabase';
+import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
+import { registerClienteViaCatalogo } from '@/services/clientes';
 
 interface ClientAuthContextType {
   client: Cliente | null;
@@ -54,9 +57,51 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
   });
 
   const register = async (data: ClientRegisterData, representanteId = 'rep-1') => {
-    // Simulação de cadastro
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
+    if (isSupabaseConfigured() && CATALOG_PATH_UUID_RE.test(representanteId)) {
+      try {
+        const saved = await registerClienteViaCatalogo(representanteId, {
+          name: data.name,
+          phone: data.phone,
+          email: data.email,
+          businessName: data.businessName,
+          cnpj: data.cnpj,
+          cep: data.cep,
+          street: data.street,
+          number: data.number,
+          complement: data.complement,
+          neighborhood: data.neighborhood,
+          city: data.city,
+          state: data.state,
+        });
+        setClient(saved);
+        localStorage.setItem('clientAuth', JSON.stringify(saved));
+        onClientRegistered?.(saved);
+        return;
+      } catch (e: unknown) {
+        const err = e as { message?: string; details?: string; hint?: string; code?: string };
+        const msg = [err.message, err.details].filter(Boolean).join(' ');
+        if (msg.includes('representante_invalid_or_unlinked')) {
+          throw new Error(
+            'Link do catálogo inválido ou representante sem conta vinculada (user_id em representantes). Gere um novo link no catálogo logado como representante ou peça ao admin para vincular seu usuário.'
+          );
+        }
+        if (msg.includes('name_and_phone_required')) {
+          throw new Error('Nome e telefone são obrigatórios.');
+        }
+        if (err.code === 'PGRST202' || msg.includes('Could not find the function')) {
+          throw new Error(
+            'Função register_cliente_catalogo não encontrada no PostgREST. Rode o SQL da migration 010 no Supabase (SQL Editor) e aguarde ~1 minuto.'
+          );
+        }
+        if (err.message || err.details) {
+          throw new Error(err.details || err.message || 'Não foi possível concluir o cadastro.');
+        }
+        throw e instanceof Error ? e : new Error('Não foi possível concluir o cadastro.');
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     const newClient: Cliente = {
       id: `client-${Date.now()}`,
       representanteId,

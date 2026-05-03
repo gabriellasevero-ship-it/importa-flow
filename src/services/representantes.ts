@@ -71,6 +71,21 @@ export async function fetchRepresentativeById(id: string): Promise<Representativ
   return data ? mapRepresentative(data as DbRepresentative) : null;
 }
 
+/** Perfil (auth) do representante logado → linha em representantes (para links do catálogo). */
+export async function fetchRepresentativeByUserId(userId: string): Promise<Representative | null> {
+  if (!userId) return null;
+  if (!isSupabaseConfigured()) {
+    return DEMO_REPRESENTATIVES.find((r) => r.userId === userId) ?? null;
+  }
+  const { data, error } = await supabase
+    .from('representantes')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapRepresentative(data as DbRepresentative) : null;
+}
+
 export async function fetchRepresentatives(): Promise<Representative[]> {
   if (!isSupabaseConfigured()) {
     return [...DEMO_REPRESENTATIVES];

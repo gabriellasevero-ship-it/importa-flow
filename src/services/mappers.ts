@@ -66,7 +66,7 @@ type DbProduct = {
   importadoras?: { name: string } | null;
 };
 
-type DbCliente = {
+export type DbCliente = {
   id: string;
   representante_id: string;
   name: string;

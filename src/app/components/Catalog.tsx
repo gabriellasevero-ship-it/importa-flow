@@ -12,7 +12,9 @@ import { Checkbox } from '@/app/components/ui/checkbox';
 import { MultiSelect } from '@/app/components/ui/multi-select';
 import { Product } from '@/types';
 import { useImportadoras, useCategories, useProducts, useClientes } from '@/hooks/useData';
+import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
+import { fetchRepresentativeByUserId } from '@/services/representantes';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
@@ -27,6 +29,7 @@ export const Catalog: React.FC<CatalogProps> = ({
   onProductSelect,
   showCart = false
 }) => {
+  const { user } = useAuth();
   const { items, addItem, updateItem, removeItem, clearCart, getTotal } = useCart();
   const { products } = useProducts();
   const { importadoras } = useImportadoras();
@@ -83,18 +86,12 @@ export const Catalog: React.FC<CatalogProps> = ({
     })
   );
 
-  const handleGenerateLink = () => {
-    // Gerar link do catálogo (não precisa de cliente específico)
-    const linkId = Math.random().toString(36).substring(7);
-    const link = `${window.location.origin}/catalogo/${linkId}`;
-    
-    // Fallback para clipboard API
+  const handleGenerateLink = async () => {
     const copyToClipboard = async (text: string) => {
       try {
         await navigator.clipboard.writeText(text);
         toast.success('Link do catálogo copiado para área de transferência!');
-      } catch (err) {
-        // Fallback usando textarea temporária
+      } catch {
         const textArea = document.createElement('textarea');
         textArea.value = text;
         textArea.style.position = 'fixed';
@@ -105,14 +102,34 @@ export const Catalog: React.FC<CatalogProps> = ({
         try {
           document.execCommand('copy');
           toast.success('Link do catálogo copiado para área de transferência!');
-        } catch (error) {
+        } catch {
           toast.error('Não foi possível copiar o link');
         }
         document.body.removeChild(textArea);
       }
     };
-    
-    copyToClipboard(link);
+
+    if (!user?.id) {
+      toast.error('Faça login para gerar o link do catálogo.');
+      return;
+    }
+
+    try {
+      const rep = await fetchRepresentativeByUserId(user.id);
+      if (!rep?.id) {
+        toast.error(
+          'Seu usuário ainda não está vinculado a um representante no sistema. Peça suporte ao administrador.'
+        );
+        return;
+      }
+      const suffix = Math.random().toString(36).substring(2, 9);
+      const link = `${window.location.origin}/catalogo/${rep.id}/${suffix}`;
+      await copyToClipboard(link);
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível gerar o link. Tente novamente.');
+    }
+
     setShowLinkDialog(false);
     setSelectedCliente('');
   };

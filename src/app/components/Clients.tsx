@@ -8,18 +8,21 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/app/components/u
 import { Badge } from '@/app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
+import { useAuth } from '@/contexts/AuthContext';
 import { useCatalogClients } from '@/contexts/CatalogClientsContext';
 import { useOrders } from '@/contexts/OrdersContext';
 import { useClientes, useImportadoras, useCommissions, useTransportadoras } from '@/hooks/useData';
+import { createCliente } from '@/services/clientes';
 import { toast } from 'sonner';
 import { Cliente, Order, OrderStatus } from '@/types';
 
 type ViewMode = 'list' | 'client-detail' | 'order-detail';
 
 export const Clients: React.FC = () => {
+  const { user } = useAuth();
   const { catalogClients } = useCatalogClients();
   const { orders } = useOrders();
-  const { clientes } = useClientes();
+  const { clientes, refetch: refetchClientes } = useClientes();
   const { importadoras } = useImportadoras();
   const { commissions } = useCommissions();
   const { transportadoras } = useTransportadoras();
@@ -109,15 +112,54 @@ export const Clients: React.FC = () => {
       .reduce((sum, order) => sum + order.total, 0);
   };
 
-  const handleAddClient = () => {
+  const handleAddClient = async () => {
     if (!newClient.name || !newClient.phone) {
       toast.error('Preencha os campos obrigatórios');
       return;
     }
-    
-    toast.success('Cliente adicionado com sucesso!');
-    setShowAddDialog(false);
-    setNewClient({ name: '', phone: '', email: '', businessName: '', cnpj: '', stateRegistration: '', cep: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '' });
+    if (!user?.id) {
+      toast.error('Sessão inválida. Faça login novamente.');
+      return;
+    }
+    try {
+      await createCliente({
+        representanteId: user.id,
+        name: newClient.name.trim(),
+        phone: newClient.phone.trim(),
+        email: newClient.email.trim() || undefined,
+        businessName: newClient.businessName.trim() || undefined,
+        cnpj: newClient.cnpj.replace(/\D/g, '') || undefined,
+        stateRegistration: newClient.stateRegistration.trim() || undefined,
+        cep: newClient.cep.replace(/\D/g, '') || undefined,
+        street: newClient.street.trim() || undefined,
+        number: newClient.number.trim() || undefined,
+        complement: newClient.complement.trim() || undefined,
+        neighborhood: newClient.neighborhood.trim() || undefined,
+        city: newClient.city.trim() || undefined,
+        state: newClient.state.trim() || undefined,
+      });
+      await refetchClientes();
+      toast.success('Cliente adicionado com sucesso!');
+      setShowAddDialog(false);
+      setNewClient({
+        name: '',
+        phone: '',
+        email: '',
+        businessName: '',
+        cnpj: '',
+        stateRegistration: '',
+        cep: '',
+        street: '',
+        number: '',
+        complement: '',
+        neighborhood: '',
+        city: '',
+        state: '',
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível salvar o cliente. Verifique os dados e tente novamente.');
+    }
   };
 
   const handleOpenClient = (client: Cliente) => {
