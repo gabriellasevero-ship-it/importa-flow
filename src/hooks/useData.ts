@@ -10,18 +10,30 @@ import * as notificationsApi from '@/services/notifications';
 import * as representantesApi from '@/services/representantes';
 import type { Importadora, Category, Product, Cliente, Transportadora, Commission } from '@/types';
 
+function messageFromFetchError(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = (e as { message: unknown }).message;
+    if (typeof m === 'string' && m.trim()) return m.trim();
+  }
+  if (e instanceof Error && e.message.trim()) return e.message.trim();
+  return 'Não foi possível carregar as importadoras.';
+}
+
 export function useImportadoras() {
   const { user } = useAuth();
   const [list, setList] = useState<Importadora[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const refetch = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await importadorasApi.fetchImportadoras();
       setList(data);
     } catch (e) {
       console.error(e);
       setList([]);
+      setError(messageFromFetchError(e));
     } finally {
       setLoading(false);
     }
@@ -29,7 +41,7 @@ export function useImportadoras() {
   useEffect(() => {
     void refetch();
   }, [refetch, user?.id]);
-  return { importadoras: list, loading, refetch };
+  return { importadoras: list, loading, error, refetch };
 }
 
 export function useCategories() {

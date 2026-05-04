@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, UserCheck, UserX, Clock, Building2, Mail, Phone, FileText, User, Trash2, Check, ChevronsUpDown } from 'lucide-react';
+import { Search, Plus, UserCheck, UserX, Clock, Building2, Mail, Phone, FileText, User, Trash2 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
@@ -20,19 +20,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/app/components/ui/select';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/app/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/app/components/ui/popover';
 import { toast } from 'sonner';
 import { cn } from '@/app/components/ui/utils';
 import type { Representative, RepresentativeStatus } from '@/services/representantes';
@@ -79,8 +66,12 @@ const statusConfig = {
 };
 
 export const Representatives: React.FC = () => {
-  const { importadoras, loading: loadingImportadoras, refetch: refetchImportadoras } =
-    useImportadoras();
+  const {
+    importadoras,
+    loading: loadingImportadoras,
+    error: importadorasError,
+    refetch: refetchImportadoras,
+  } = useImportadoras();
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<RepresentativeStatus | 'all'>('all');
@@ -88,7 +79,6 @@ export const Representatives: React.FC = () => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [editingRepresentative, setEditingRepresentative] = useState<Representative | null>(null);
   const [deletingRepresentative, setDeletingRepresentative] = useState<Representative | null>(null);
-  const [openImporterCombobox, setOpenImporterCombobox] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -574,85 +564,57 @@ export const Representatives: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <Label>Importadora Associada (opcional)</Label>
-              <Popover open={openImporterCombobox} onOpenChange={setOpenImporterCombobox}>
-                <PopoverTrigger asChild>
+              <Label htmlFor="importer-select">Importadora Associada (opcional)</Label>
+              <Select
+                value={formData.importerId || '__none__'}
+                onValueChange={(v) => {
+                  if (v === '__none__') {
+                    setFormData({ ...formData, importerId: '', company: '' });
+                  } else {
+                    const imp = importadoras.find((i) => i.id === v);
+                    setFormData({
+                      ...formData,
+                      importerId: v,
+                      company: imp?.name ?? '',
+                    });
+                  }
+                }}
+                disabled={loadingImportadoras && importadoras.length === 0}
+              >
+                <SelectTrigger id="importer-select" className="w-full">
+                  <SelectValue
+                    placeholder={
+                      loadingImportadoras && importadoras.length === 0
+                        ? 'Carregando importadoras...'
+                        : 'Selecione uma importadora...'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent position="popper" className="z-[100] max-h-[280px]">
+                  <SelectItem value="__none__">Nenhuma (representante autônoma)</SelectItem>
+                  {importadoras.map((imp) => (
+                    <SelectItem key={imp.id} value={imp.id}>
+                      <span className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />
+                        {imp.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {importadorasError && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs text-destructive">{importadorasError}</p>
                   <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openImporterCombobox}
-                    disabled={loadingImportadoras && importadoras.length === 0}
-                    className="w-full justify-between"
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => void refetchImportadoras()}
                   >
-                    {loadingImportadoras && importadoras.length === 0
-                      ? 'Carregando importadoras...'
-                      : formData.importerId
-                        ? importadoras.find((importer) => importer.id === formData.importerId)
-                            ?.name
-                        : 'Selecione uma importadora...'}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    Tentar novamente
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="p-0 w-[var(--radix-popover-trigger-width)] min-w-[280px]"
-                  align="start"
-                >
-                  <Command>
-                    <CommandInput placeholder="Buscar importadora..." />
-                    <CommandList>
-                      <CommandEmpty>
-                        {loadingImportadoras
-                          ? 'Carregando...'
-                          : 'Nenhuma importadora encontrada.'}
-                      </CommandEmpty>
-                      <CommandGroup>
-                        <CommandItem
-                          value="__none__"
-                          keywords={['nenhuma', 'autônoma', 'representante']}
-                          onSelect={() => {
-                            setFormData({ ...formData, importerId: '', company: '' });
-                            setOpenImporterCombobox(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              'mr-2 h-4 w-4',
-                              formData.importerId === '' ? 'opacity-100' : 'opacity-0'
-                            )}
-                          />
-                          Nenhuma (representante autônoma)
-                        </CommandItem>
-                        {importadoras.map((importer) => (
-                          <CommandItem
-                            key={importer.id}
-                            value={importer.id}
-                            keywords={[importer.name, importer.cnpj]}
-                            onSelect={() => {
-                              setFormData({
-                                ...formData,
-                                importerId: importer.id,
-                                company: importer.name,
-                              });
-                              setOpenImporterCombobox(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                'mr-2 h-4 w-4',
-                                formData.importerId === importer.id ? 'opacity-100' : 'opacity-0'
-                              )}
-                            />
-                            <div className="flex items-center gap-2">
-                              <Building2 className="w-4 h-4 text-muted-foreground" />
-                              {importer.name}
-                            </div>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
                 Vincule a representante a uma importadora ou deixe como autônoma
               </p>
