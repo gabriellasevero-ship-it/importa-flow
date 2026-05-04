@@ -32,6 +32,37 @@ type DbRepresentative = {
   created_at: string;
 };
 
+function throwIfMutationDeniedByRls(error: unknown): never {
+  if (error && typeof error === 'object') {
+    const e = error as { code?: string; message?: string };
+    const msg = (e.message ?? '').toLowerCase();
+    if (
+      e.code === '42501' ||
+      msg.includes('row-level security') ||
+      msg.includes('violates row-level security')
+    ) {
+      throw new Error(
+        'O banco negou o salvamento (segurança em nível de linha). Confirme que está logado no sistema e que as migrations do Supabase foram aplicadas na tabela representantes (incluindo políticas para o role authenticated). No painel: SQL Editor ou supabase db push.'
+      );
+    }
+  }
+  throw error;
+}
+
+/** INSERT/UPDATE/DELETE não são permitidos como anon; SELECT pode ser (catálogo público). */
+async function requireAuthenticatedSessionForMutation(): Promise<void> {
+  await syncAuthBeforeDbRead();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error || !user) {
+    throw new Error(
+      'Sessão inválida ou expirada. Para cadastrar ou editar representantes é preciso estar logado com uma conta válida. Faça login novamente e tente de novo.'
+    );
+  }
+}
+
 function mapRepresentative(row: DbRepresentative): Representative {
   return {
     id: row.id,
@@ -129,7 +160,7 @@ export async function createRepresentative(input: {
     };
   }
 
-  await syncAuthBeforeDbRead();
+  await requireAuthenticatedSessionForMutation();
   const { data, error } = await supabase
     .from('representantes')
     .insert({
@@ -145,7 +176,7 @@ export async function createRepresentative(input: {
     })
     .select()
     .single();
-  if (error) throw error;
+  if (error) throwIfMutationDeniedByRls(error);
   return mapRepresentative(data as DbRepresentative);
 }
 
@@ -164,14 +195,14 @@ export async function updateRepresentative(
   if (updates.status != null) db.status = updates.status;
   if (updates.totalSales !== undefined) db.total_sales = updates.totalSales ?? null;
 
-  await syncAuthBeforeDbRead();
+  await requireAuthenticatedSessionForMutation();
   const { data, error } = await supabase
     .from('representantes')
     .update(db)
     .eq('id', id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throwIfMutationDeniedByRls(error);
   return mapRepresentative(data as DbRepresentative);
 }
 
@@ -179,20 +210,20 @@ export async function updateRepresentativeStatus(
   id: string,
   status: RepresentativeStatus
 ): Promise<Representative> {
-  await syncAuthBeforeDbRead();
+  await requireAuthenticatedSessionForMutation();
   const { data, error } = await supabase
     .from('representantes')
     .update({ status })
     .eq('id', id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throwIfMutationDeniedByRls(error);
   return mapRepresentative(data as DbRepresentative);
 }
 
 export async function deleteRepresentative(id: string): Promise<void> {
-  await syncAuthBeforeDbRead();
+  await requireAuthenticatedSessionForMutation();
   const { error } = await supabase.from('representantes').delete().eq('id', id);
-  if (error) throw error;
+  if (error) throwIfMutationDeniedByRls(error);
 }
 
