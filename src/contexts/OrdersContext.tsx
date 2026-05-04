@@ -6,7 +6,7 @@ import * as ordersApi from '@/services/orders';
 interface OrdersContextType {
   orders: Order[];
   loading: boolean;
-  addOrder: (order: Order) => Promise<void>;
+  addOrder: (order: Order, catalog?: { representanteRowId: string }) => Promise<void>;
   updateOrder: (orderId: string, updates: Partial<Order>, replaceItems?: Order['items']) => Promise<void>;
   refetch: () => Promise<void>;
 }
@@ -52,7 +52,25 @@ export const OrdersProvider: React.FC<OrdersProviderProps> = ({ children }) => {
     refetch();
   }, [refetch]);
 
-  const addOrder = async (order: Order) => {
+  const addOrder = async (order: Order, catalog?: { representanteRowId: string }) => {
+    if (order.origin === 'cliente' && catalog?.representanteRowId) {
+      const out = await ordersApi.createOrderCatalogo(catalog.representanteRowId, {
+        ...order,
+        clienteId: order.clienteId!,
+        importadoraId: order.importadoraId,
+        items: order.items,
+      });
+      const created: Order = {
+        ...order,
+        id: out.order_id,
+        total: out.total,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      setOrders(prev => [created, ...prev]);
+      return;
+    }
+
     const repId = user?.id ?? order.representanteId;
     if (!repId) return;
     const created = await ordersApi.createOrder({

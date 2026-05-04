@@ -117,6 +117,63 @@ export async function fetchRepresentativeByUserId(userId: string): Promise<Repre
   return data ? mapRepresentative(data as DbRepresentative) : null;
 }
 
+/**
+ * Para gerar o link do catálogo: usa `user_id`; se não houver (cadastro feito pelo admin sem vínculo),
+ * localiza por e-mail igual ao do perfil e preenche `user_id` automaticamente quando a linha ainda está sem conta.
+ */
+export async function resolveRepresentativeForCatalogShare(
+  userId: string,
+  userEmail: string
+): Promise<Representative | null> {
+  const byUser = await fetchRepresentativeByUserId(userId);
+  if (byUser?.id) return byUser;
+
+  const trimmed = userEmail?.trim() ?? '';
+  if (!trimmed) return null;
+
+  if (!isSupabaseConfigured()) {
+    return DEMO_REPRESENTATIVES.find((r) => r.userId === userId) ?? null;
+  }
+
+  await syncAuthBeforeDbRead();
+
+  const { data: exactRows, error: exactErr } = await supabase
+    .from('representantes')
+    .select('*')
+    .eq('email', trimmed);
+  if (exactErr) throw exactErr;
+
+  let rows = (exactRows ?? []) as DbRepresentative[];
+  if (rows.length === 0) {
+    const { data: ilikeRows, error: ilikeErr } = await supabase
+      .from('representantes')
+      .select('*')
+      .ilike('email', trimmed);
+    if (ilikeErr) throw ilikeErr;
+    rows = (ilikeRows ?? []) as DbRepresentative[];
+  }
+
+  if (rows.length === 0) return null;
+
+  const linkedToMe = rows.find((r) => r.user_id === userId);
+  if (linkedToMe) return mapRepresentative(linkedToMe);
+
+  const unlinked = rows.find((r) => !r.user_id);
+  if (unlinked) {
+    await requireAuthenticatedSessionForMutation();
+    const { data: updated, error: updateErr } = await supabase
+      .from('representantes')
+      .update({ user_id: userId })
+      .eq('id', unlinked.id)
+      .select()
+      .single();
+    if (updateErr) throwIfMutationDeniedByRls(updateErr);
+    return mapRepresentative(updated as DbRepresentative);
+  }
+
+  return null;
+}
+
 export async function fetchRepresentatives(): Promise<Representative[]> {
   if (!isSupabaseConfigured()) {
     return [...DEMO_REPRESENTATIVES];

@@ -257,13 +257,39 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
       };
     });
 
-    newOrders.forEach(order => addOrder(order));
-    
-    toast.success('Pedido enviado com sucesso! O representante será notificado.');
-    setCart([]);
-    setObservations('');
-    setShowOrderDialog(false);
-    setShowCart(false);
+    try {
+      await Promise.all(
+        newOrders.map((order) => addOrder(order, { representanteRowId: representanteId }))
+      );
+      toast.success('Pedido enviado com sucesso! O representante será notificado.');
+      setCart([]);
+      setObservations('');
+      setShowOrderDialog(false);
+      setShowCart(false);
+    } catch (e: unknown) {
+      console.error(e);
+      const err = e as { message?: string; details?: string; code?: string };
+      const msg = [err.message, err.details].filter(Boolean).join(' ');
+      if (msg.includes('representante_invalid_or_unlinked')) {
+        toast.error(
+          'Este link não está vinculado a uma conta de representante. Gere um novo link logado no catálogo ou peça ao admin para vincular o usuário ao cadastro.'
+        );
+      } else if (msg.includes('cliente_invalid')) {
+        toast.error('Não foi possível associar o pedido ao seu cadastro. Faça login novamente ou registre-se de novo.');
+      } else if (msg.includes('product_invalid')) {
+        toast.error('Um ou mais produtos não estão disponíveis. Atualize a página e tente de novo.');
+      } else if (msg.includes('items_required')) {
+        toast.error('Adicione pelo menos um produto ao pedido.');
+      } else if (msg.includes('PGRST202') || msg.includes('Could not find')) {
+        toast.error(
+          'Função de pedido não encontrada no servidor. Aplique a migration 012 no Supabase (SQL Editor) e aguarde um minuto.'
+        );
+      } else if (msg.includes('42501') || msg.toLowerCase().includes('row-level security')) {
+        toast.error('O servidor recusou salvar o pedido. Confira se a migration 012 foi aplicada.');
+      } else {
+        toast.error('Não foi possível enviar o pedido. Tente de novo ou entre em contato com o representante.');
+      }
+    }
   };
 
   // Filtrar pedidos do cliente (área logada do cliente, com status)

@@ -2,6 +2,48 @@ import { supabase } from '@/lib/supabase';
 import { mapOrder, mapOrderItem, toDbOrder } from './mappers';
 import type { Order, CartItem } from '@/types';
 
+type CreateOrderCatalogoResult = { order_id: string; total: number };
+
+/**
+ * Pedido pelo link do catálogo: sessão Supabase é `anon` — insert direto em `orders` é bloqueado pelo RLS.
+ * Usa RPC SECURITY DEFINER (migration 012).
+ */
+export async function createOrderCatalogo(
+  representanteRowId: string,
+  order: Partial<Order> & { clienteId: string; importadoraId: string; items: CartItem[] }
+): Promise<CreateOrderCatalogoResult> {
+  if (!order.clienteId) {
+    throw new Error('cliente_id_required');
+  }
+  const itemsPayload = order.items.map((i) => ({
+    product_id: i.productId,
+    quantity: i.quantity,
+    observations: i.observations ?? null,
+  }));
+
+  const { data, error } = await supabase.rpc('create_order_catalogo', {
+    p_representante_row_id: representanteRowId,
+    p_cliente_id: order.clienteId,
+    p_importadora_id: order.importadoraId,
+    p_items: itemsPayload,
+    p_link_id: order.linkId ?? null,
+    p_observations: order.observations ?? null,
+    p_transportadora_id: order.transportadoraId ?? null,
+  });
+
+  if (error) throw error;
+
+  const raw = data as { order_id?: string; total?: string | number } | null;
+  if (!raw?.order_id) {
+    throw new Error('create_order_catalogo_unexpected_response');
+  }
+
+  return {
+    order_id: raw.order_id,
+    total: Number(raw.total ?? 0),
+  };
+}
+
 export async function fetchOrders(representanteId: string): Promise<Order[]> {
   const { data: ordersData, error: ordersError } = await supabase
     .from('orders')

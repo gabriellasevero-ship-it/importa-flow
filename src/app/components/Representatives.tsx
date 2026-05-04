@@ -219,7 +219,12 @@ export const Representatives: React.FC = () => {
         setDeletingRepresentative(null);
       } catch (e) {
         console.error(e);
-        toast.error('Não foi possível excluir o representante.');
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível excluir o representante. ${detail}`
+            : 'Não foi possível excluir o representante.'
+        );
       } finally {
         setLoading(false);
       }
@@ -651,7 +656,7 @@ export const Representatives: React.FC = () => {
             {editingRepresentative && (
               <Button
                 variant="destructive"
-                onClick={() => setShowDeleteDialog(true)}
+                onClick={() => confirmDelete(editingRepresentative)}
                 className="mr-auto"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -669,7 +674,13 @@ export const Representatives: React.FC = () => {
       </Dialog>
 
       {/* Dialog de Confirmação de Exclusão */}
-      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+      <Dialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          setShowDeleteDialog(open);
+          if (!open) setDeletingRepresentative(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirmar Exclusão</DialogTitle>
@@ -679,7 +690,7 @@ export const Representatives: React.FC = () => {
             <p className="text-sm text-muted-foreground">
               Tem certeza que deseja excluir o representante{' '}
               <span className="font-semibold text-foreground">
-                {editingRepresentative?.name}
+                {deletingRepresentative?.name ?? editingRepresentative?.name}
               </span>
               ? Todos os dados e histórico de vendas serão mantidos, mas o acesso será removido.
             </p>

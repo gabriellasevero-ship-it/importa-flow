@@ -14,7 +14,7 @@ import { Product } from '@/types';
 import { useImportadoras, useCategories, useProducts, useClientes } from '@/hooks/useData';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
-import { fetchRepresentativeByUserId } from '@/services/representantes';
+import { resolveRepresentativeForCatalogShare } from '@/services/representantes';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
@@ -115,10 +115,10 @@ export const Catalog: React.FC<CatalogProps> = ({
     }
 
     try {
-      const rep = await fetchRepresentativeByUserId(user.id);
+      const rep = await resolveRepresentativeForCatalogShare(user.id, user.email);
       if (!rep?.id) {
         toast.error(
-          'Seu usuário ainda não está vinculado a um representante no sistema. Peça suporte ao administrador.'
+          'Não foi possível identificar seu cadastro de representante. Confira se existe um representante com o mesmo e-mail da sua conta; se o e-mail já estiver vinculado a outro usuário, peça suporte ao administrador.'
         );
         return;
       }
