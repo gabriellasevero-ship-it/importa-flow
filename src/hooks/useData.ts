@@ -11,6 +11,7 @@ import * as representantesApi from '@/services/representantes';
 import type { Importadora, Category, Product, Cliente, Transportadora, Commission } from '@/types';
 
 export function useImportadoras() {
+  const { user } = useAuth();
   const [list, setList] = useState<Importadora[]>([]);
   const [loading, setLoading] = useState(true);
   const refetch = useCallback(async () => {
@@ -26,8 +27,8 @@ export function useImportadoras() {
     }
   }, []);
   useEffect(() => {
-    refetch();
-  }, [refetch]);
+    void refetch();
+  }, [refetch, user?.id]);
   return { importadoras: list, loading, refetch };
 }
 

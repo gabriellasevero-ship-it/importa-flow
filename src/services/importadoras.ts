@@ -1,8 +1,22 @@
-import { supabase, syncAuthBeforeDbRead } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured, syncAuthBeforeDbRead } from '@/lib/supabase';
 import { mapImportadora } from './mappers';
 import type { Importadora } from '@/types';
 
+/** Mesmo padrão de representantes.ts: sem .env o SELECT falha no host placeholder; evita lista vazia no backoffice/demo. */
+const DEMO_IMPORTADORAS: Importadora[] = [
+  {
+    id: 'demo-importadora-1',
+    name: 'Importadora Demo',
+    cnpj: '12.345.678/0001-90',
+    active: true,
+    createdAt: new Date(),
+  },
+];
+
 export async function fetchImportadoras(): Promise<Importadora[]> {
+  if (!isSupabaseConfigured()) {
+    return DEMO_IMPORTADORAS;
+  }
   await syncAuthBeforeDbRead();
   const { data, error } = await supabase
     .from('importadoras')

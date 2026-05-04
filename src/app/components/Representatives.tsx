@@ -79,7 +79,8 @@ const statusConfig = {
 };
 
 export const Representatives: React.FC = () => {
-  const { importadoras } = useImportadoras();
+  const { importadoras, loading: loadingImportadoras, refetch: refetchImportadoras } =
+    useImportadoras();
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<RepresentativeStatus | 'all'>('all');
@@ -120,6 +121,7 @@ export const Representatives: React.FC = () => {
   }, []);
 
   const handleAdd = () => {
+    void refetchImportadoras();
     setEditingRepresentative(null);
     setFormData({
       name: '',
@@ -135,6 +137,7 @@ export const Representatives: React.FC = () => {
   };
 
   const handleEdit = (representative: Representative) => {
+    void refetchImportadoras();
     setEditingRepresentative(representative);
     setFormData({
       name: representative.name,
@@ -578,23 +581,34 @@ export const Representatives: React.FC = () => {
                     variant="outline"
                     role="combobox"
                     aria-expanded={openImporterCombobox}
+                    disabled={loadingImportadoras && importadoras.length === 0}
                     className="w-full justify-between"
                   >
-                    {formData.importerId
-                      ? importadoras.find((importer) => importer.id === formData.importerId)
-                          ?.name
-                      : 'Selecione uma importadora...'}
+                    {loadingImportadoras && importadoras.length === 0
+                      ? 'Carregando importadoras...'
+                      : formData.importerId
+                        ? importadoras.find((importer) => importer.id === formData.importerId)
+                            ?.name
+                        : 'Selecione uma importadora...'}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-full p-0">
+                <PopoverContent
+                  className="p-0 w-[var(--radix-popover-trigger-width)] min-w-[280px]"
+                  align="start"
+                >
                   <Command>
                     <CommandInput placeholder="Buscar importadora..." />
                     <CommandList>
-                      <CommandEmpty>Nenhuma importadora encontrada.</CommandEmpty>
+                      <CommandEmpty>
+                        {loadingImportadoras
+                          ? 'Carregando...'
+                          : 'Nenhuma importadora encontrada.'}
+                      </CommandEmpty>
                       <CommandGroup>
                         <CommandItem
-                          value=""
+                          value="__none__"
+                          keywords={['nenhuma', 'autônoma', 'representante']}
                           onSelect={() => {
                             setFormData({ ...formData, importerId: '', company: '' });
                             setOpenImporterCombobox(false);
@@ -611,7 +625,8 @@ export const Representatives: React.FC = () => {
                         {importadoras.map((importer) => (
                           <CommandItem
                             key={importer.id}
-                            value={importer.name}
+                            value={importer.id}
+                            keywords={[importer.name, importer.cnpj]}
                             onSelect={() => {
                               setFormData({
                                 ...formData,
