@@ -67,7 +67,13 @@ export const OrdersProvider: React.FC<OrdersProviderProps> = ({ children }) => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      setOrders(prev => [created, ...prev]);
+      // Visitante anônimo: mantém o pedido na lista local (histórico no catálogo).
+      // Representante logado no mesmo navegador: recarrega do banco (evita estado antigo / race com refetch inicial).
+      if (user?.id) {
+        await refetch();
+      } else {
+        setOrders((prev) => [created, ...prev]);
+      }
       return;
     }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShoppingBag, ArrowLeft, Package, DollarSign, TrendingUp, Calendar, Building, User, Download, Bell, Eye, Search, Upload, FileText, X, CheckCircle, Truck } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -21,7 +21,11 @@ type ViewMode = 'list' | 'detail';
 type FilterType = 'all' | 'unread' | 'cliente' | 'representante';
 
 export const Orders: React.FC = () => {
-  const { orders, loading, updateOrder } = useOrders();
+  const { orders, loading, updateOrder, refetch } = useOrders();
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
   const { transportadoras } = useTransportadoras();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);

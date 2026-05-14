@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { TrendingUp, Package, ShoppingBag, DollarSign, Users, Building2, UserCheck, BarChart3, Bell } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
@@ -14,7 +14,11 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const { user } = useAuth();
-  const { orders } = useOrders();
+  const { orders, refetch: refetchOrders } = useOrders();
+
+  useEffect(() => {
+    void refetchOrders();
+  }, [refetchOrders]);
   const { importadoras } = useImportadoras();
   const { products } = useProducts();
   const { commissions } = useCommissions();

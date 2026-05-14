@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, UserPlus, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
@@ -135,6 +135,21 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     phone: '',
   });
 
+  /** Após login/cadastro, reabrir o diálogo "Confirmar Pedido" (fluxo vindo do carrinho ou do envio). */
+  const orderConfirmPendingAfterAuthRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || !orderConfirmPendingAfterAuthRef.current) return;
+    orderConfirmPendingAfterAuthRef.current = false;
+    setShowOrderDialog(true);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    if (showLoginDialog || showRegisterDialog) return;
+    orderConfirmPendingAfterAuthRef.current = false;
+  }, [showLoginDialog, showRegisterDialog, isAuthenticated]);
+
   const availableSubcategories = selectedCategory === 'all' 
     ? [] 
     : categoriesList.find(cat => cat.name === selectedCategory)?.subcategories || [];
@@ -211,6 +226,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   const handleSubmitOrder = async () => {
     if (!isAuthenticated) {
       toast.error('Você precisa estar logado para fazer um pedido');
+      orderConfirmPendingAfterAuthRef.current = true;
       setShowLoginDialog(true);
       return;
     }
@@ -835,6 +851,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                   <Button
                     onClick={() => {
                       if (!isAuthenticated) {
+                        orderConfirmPendingAfterAuthRef.current = true;
                         setShowCart(false);
                         setShowLoginDialog(true);
                       } else {

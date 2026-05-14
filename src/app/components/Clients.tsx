@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Users, Plus, Phone, Mail, Building, Search, Edit, ShoppingBag, Calendar, DollarSign, FileText, X, ArrowLeft, Package, TrendingUp, RefreshCw, Download, MapPin, Truck } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -21,7 +21,7 @@ type ViewMode = 'list' | 'client-detail' | 'order-detail';
 export const Clients: React.FC = () => {
   const { user } = useAuth();
   const { catalogClients } = useCatalogClients();
-  const { orders } = useOrders();
+  const { orders, refetch: refetchOrders } = useOrders();
   const { clientes, refetch: refetchClientes } = useClientes();
   const { importadoras } = useImportadoras();
   const { commissions } = useCommissions();
@@ -53,6 +53,10 @@ export const Clients: React.FC = () => {
     city: '',
     state: '',
   });
+
+  useEffect(() => {
+    void refetchOrders();
+  }, [refetchOrders]);
 
   const formatCNPJ = (value: string) => {
     const cleaned = value.replace(/\D/g, '');
