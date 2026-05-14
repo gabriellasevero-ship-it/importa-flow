@@ -982,7 +982,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               <Button
                 onClick={async () => {
                   try {
-                    await login(loginData.email, loginData.phone);
+                    await login(loginData.email, loginData.phone, representanteId);
                     setShowLoginDialog(false);
                     setLoginData({ email: '', phone: '' });
                     toast.success('Login realizado com sucesso!');
@@ -1124,7 +1124,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               <Button
                 onClick={async () => {
                   try {
-                    await register(registerData, representanteId);
+                    const { isNew } = await register(registerData, representanteId);
                     setShowRegisterDialog(false);
                     setRegisterData({
                       name: '',
@@ -1140,7 +1140,11 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                       city: '',
                       state: '',
                     });
-                    toast.success('Cadastro realizado com sucesso!');
+                    toast.success(
+                      isNew
+                        ? 'Cadastro realizado com sucesso!'
+                        : 'Conta já cadastrada. Conectamos você para fazer pedidos.'
+                    );
                   } catch (error: unknown) {
                     const e = error as { message?: string; details?: string };
                     toast.error(e.details || e.message || 'Erro ao cadastrar');

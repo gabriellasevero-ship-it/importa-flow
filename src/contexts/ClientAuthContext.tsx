@@ -2,12 +2,12 @@ import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Cliente } from '@/types';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
-import { registerClienteViaCatalogo } from '@/services/clientes';
+import { loginClienteCatalogo, registerClienteViaCatalogo } from '@/services/clientes';
 
 interface ClientAuthContextType {
   client: Cliente | null;
-  register: (data: ClientRegisterData, representanteId?: string) => Promise<void>;
-  login: (email: string, phone: string) => Promise<void>;
+  register: (data: ClientRegisterData, representanteId?: string) => Promise<{ isNew: boolean }>;
+  login: (identifier: string, phone: string, representanteId?: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -56,10 +56,10 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
     return null;
   });
 
-  const register = async (data: ClientRegisterData, representanteId = 'rep-1') => {
+  const register = async (data: ClientRegisterData, representanteId = 'rep-1'): Promise<{ isNew: boolean }> => {
     if (isSupabaseConfigured() && CATALOG_PATH_UUID_RE.test(representanteId)) {
       try {
-        const saved = await registerClienteViaCatalogo(representanteId, {
+        const { cliente: saved, isNew } = await registerClienteViaCatalogo(representanteId, {
           name: data.name,
           phone: data.phone,
           email: data.email,
@@ -76,7 +76,7 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
         setClient(saved);
         localStorage.setItem('clientAuth', JSON.stringify(saved));
         onClientRegistered?.(saved);
-        return;
+        return { isNew };
       } catch (e: unknown) {
         const err = e as { message?: string; details?: string; hint?: string; code?: string };
         const msg = [err.message, err.details].filter(Boolean).join(' ');
@@ -90,7 +90,7 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
         }
         if (err.code === 'PGRST202' || msg.includes('Could not find the function')) {
           throw new Error(
-            'Função register_cliente_catalogo não encontrada no PostgREST. Rode o SQL da migration 010 no Supabase (SQL Editor) e aguarde ~1 minuto.'
+            'Função register_cliente_catalogo não encontrada no PostgREST. Rode as migrations do catálogo (010+) no Supabase (SQL Editor) e aguarde ~1 minuto.'
           );
         }
         if (err.message || err.details) {
@@ -123,23 +123,68 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
     setClient(newClient);
     localStorage.setItem('clientAuth', JSON.stringify(newClient));
     onClientRegistered?.(newClient);
+    return { isNew: true };
   };
 
-  const login = async (email: string, phone: string) => {
-    // Simulação de login - em produção, faria busca no backend
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Por enquanto, apenas valida se os dados estão corretos
-    // Em produção, faria uma chamada ao backend
+  const login = async (identifier: string, phone: string, representanteId = 'rep-1') => {
+    if (isSupabaseConfigured() && CATALOG_PATH_UUID_RE.test(representanteId)) {
+      try {
+        const found = await loginClienteCatalogo(representanteId, identifier, phone);
+        setClient(found);
+        localStorage.setItem('clientAuth', JSON.stringify(found));
+        return;
+      } catch (e: unknown) {
+        const err = e as { message?: string; details?: string; hint?: string; code?: string };
+        const msg = [err.message, err.details, err.hint].filter(Boolean).join(' ');
+        if (msg.includes('representante_invalid_or_unlinked')) {
+          throw new Error(
+            'Link do catálogo inválido ou representante sem conta vinculada (user_id em representantes). Gere um novo link no catálogo logado como representante ou peça ao admin para vincular seu usuário.'
+          );
+        }
+        if (msg.includes('identifier_required')) {
+          throw new Error('Informe seu e-mail ou telefone para entrar.');
+        }
+        if (msg.includes('cliente_not_found')) {
+          throw new Error(
+            'Não encontramos seu cadastro para esta representante. Verifique os dados ou faça o cadastro.'
+          );
+        }
+        if (err.code === 'PGRST202' || msg.includes('Could not find the function')) {
+          throw new Error(
+            'Função login_cliente_catalogo não encontrada no PostgREST. Rode a migration 013 no Supabase (SQL Editor) e aguarde ~1 minuto.'
+          );
+        }
+        if (err.message || err.details) {
+          throw new Error(err.details || err.message || 'Não foi possível entrar.');
+        }
+        throw e instanceof Error ? e : new Error('Não foi possível entrar.');
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     const saved = localStorage.getItem('clientAuth');
     if (saved) {
-      const savedClient = JSON.parse(saved);
-      if (savedClient.email === email || savedClient.phone === phone) {
-        setClient(savedClient);
+      const savedClient = JSON.parse(saved) as Cliente & { email?: string; phone?: string };
+      const idTrim = identifier.trim();
+      const phoneTrim = phone.trim();
+      const matchEmail =
+        idTrim.includes('@') &&
+        savedClient.email &&
+        savedClient.email.toLowerCase() === idTrim.toLowerCase();
+      const digits = (s: string) => s.replace(/\D/g, '');
+      const matchPhoneField =
+        phoneTrim.length > 0 && digits(savedClient.phone ?? '') === digits(phoneTrim);
+      const matchIdentifierAsPhone =
+        !idTrim.includes('@') &&
+        idTrim.length > 0 &&
+        digits(savedClient.phone ?? '') === digits(idTrim);
+      if (matchEmail || matchPhoneField || matchIdentifierAsPhone) {
+        setClient(savedClient as Cliente);
         return;
       }
     }
-    
+
     throw new Error('Cliente não encontrado. Por favor, faça o cadastro primeiro.');
   };
 

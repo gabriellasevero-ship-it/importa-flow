@@ -3,11 +3,36 @@ import { User } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { getProfile, ensureProfile } from '@/services/profile';
 import { getConfiguredSupabaseHost, isSupabaseConfigured } from '@/lib/supabase';
-import { createRepresentative } from '@/services/representantes';
+import {
+  createRepresentative,
+  fetchRepresentativeByUserId,
+  linkRepresentanteByEmailIfUnlinked,
+} from '@/services/representantes';
+
+export const PENDING_REP_SELF_REGISTER = 'importaflow_pending_rep_self_register';
+
+export type PendingRepSelfRegister = {
+  mode: 'self_register';
+  name: string;
+  email?: string;
+  phone?: string;
+};
+
+type AuthSessionUser = { id: string; email?: string | null };
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  /** Login sem senha: envia link mágico por e-mail (`shouldCreateUser` conforme modo). */
+  signInWithMagicLink: (
+    email: string,
+    mode: 'login' | 'register',
+    registerExtra?: { name: string; phone?: string }
+  ) => Promise<void>;
+  signInWithOAuthProvider: (
+    provider: 'google' | 'facebook' | 'apple',
+    pending?: PendingRepSelfRegister | null
+  ) => Promise<void>;
   registerRepresentative: (input: {
     name: string;
     email: string;
@@ -35,6 +60,14 @@ function normalizeAuthError(message: string): string {
   }
   if (lower.includes('email not confirmed')) {
     return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';
+  }
+  if (lower.includes('signups not allowed') || lower.includes('signup_disabled')) {
+    return 'Novos cadastros por este método estão desativados no projeto Supabase.';
+  }
+  if (lower.includes('redirect') && lower.includes('url')) {
+    return (
+      'URL de retorno não permitida. No Supabase (Authentication → URL Configuration), adicione a URL exata do site em Redirect URLs.'
+    );
   }
   if (
     lower.includes('network') ||
@@ -68,6 +101,69 @@ function rejectAfter(ms: number, message: string): Promise<never> {
   });
 }
 
+async function completePendingRepresentativeSignupIfNeeded(
+  userId: string,
+  sessionEmail: string
+): Promise<void> {
+  if (typeof window === 'undefined') return;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(PENDING_REP_SELF_REGISTER);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+
+  let pending: PendingRepSelfRegister;
+  try {
+    pending = JSON.parse(raw) as PendingRepSelfRegister;
+  } catch {
+    try {
+      localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  if (pending.mode !== 'self_register' || !pending.name?.trim()) {
+    return;
+  }
+
+  const sessionNorm = sessionEmail.trim().toLowerCase();
+  const pendingEmail = (pending.email ?? '').trim().toLowerCase();
+  if (pendingEmail && pendingEmail !== sessionNorm) {
+    return;
+  }
+
+  const email = sessionNorm || pendingEmail;
+  if (!email) return;
+
+  const existing = await fetchRepresentativeByUserId(userId);
+  if (existing) {
+    try {
+      localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  await ensureProfile(userId, pending.name.trim(), email);
+  await createRepresentative({
+    userId,
+    name: pending.name.trim(),
+    email,
+    phone: pending.phone?.trim() ?? '',
+  });
+
+  try {
+    localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+  } catch {
+    /* ignore */
+  }
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = () => {
@@ -86,12 +182,37 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadUser = useCallback(async (authUserId: string) => {
-    const profile = await getProfile(authUserId);
-    setUser(profile);
+  const loadUser = useCallback(async (authUser: AuthSessionUser) => {
+    const userId = authUser.id;
+    const sessionEmail = authUser.email ?? '';
+
+    const profile = await Promise.race([
+      getProfile(userId),
+      rejectAfter(
+        PROFILE_TIMEOUT_MS,
+        'Perfil demorou para responder. Verifique no Supabase (Table Editor → profiles) se existe uma linha com o id do seu usuário.'
+      ),
+    ]);
+
     if (!profile) {
-      throw new Error('Perfil não encontrado. Verifique se seu usuário existe na tabela profiles do Supabase.');
+      throw new Error(
+        'Perfil não encontrado. Verifique se seu usuário existe na tabela profiles do Supabase.'
+      );
     }
+
+    if (profile.role === 'representante' && profile.email) {
+      await linkRepresentanteByEmailIfUnlinked(userId, profile.email);
+    }
+
+    await completePendingRepresentativeSignupIfNeeded(userId, sessionEmail);
+
+    const finalProfile = await getProfile(userId);
+    if (!finalProfile) {
+      throw new Error(
+        'Perfil não encontrado. Verifique se seu usuário existe na tabela profiles do Supabase.'
+      );
+    }
+    setUser(finalProfile);
   }, []);
 
   useEffect(() => {
@@ -102,16 +223,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      // INITIAL_SESSION já é coberto por getSession() abaixo; tratar de novo pode competir e zerar o user.
       if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
         return;
       }
-      // Não use await no handler síncrono: o auth-js usa Web Locks (supabase-js#2013).
       window.setTimeout(() => {
         void (async () => {
           try {
             if (session?.user) {
-              await loadUser(session.user.id);
+              await loadUser(session.user);
             } else if (event === 'SIGNED_OUT') {
               setUser(null);
             }
@@ -126,7 +245,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       .getSession()
       .then(({ data: { session } }) => {
         if (session?.user) {
-          loadUser(session.user.id).finally(stopLoading);
+          loadUser(session.user).finally(stopLoading);
         } else {
           stopLoading();
         }
@@ -180,7 +299,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     );
 
     try {
-      await Promise.race([loadUser(data.user.id), profileTimeout]);
+      await Promise.race([loadUser(data.user), profileTimeout]);
     } catch (profileErr) {
       await supabase.auth.signOut();
       const msg =
@@ -192,6 +311,97 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           ? msg
           : 'Seu usuário não possui perfil no sistema. Entre em contato com o administrador ou confira a documentação em docs/DEBUG_PROFILES.md.'
       );
+    }
+  };
+
+  const signInWithMagicLink = async (
+    email: string,
+    mode: 'login' | 'register',
+    registerExtra?: { name: string; phone?: string }
+  ) => {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Login com link só está disponível quando o Supabase estiver configurado.');
+    }
+    const trimmed = email.trim();
+    if (!trimmed) {
+      throw new Error('Informe um e-mail válido.');
+    }
+    if (mode === 'register') {
+      if (!registerExtra?.name?.trim()) {
+        throw new Error('Informe seu nome para concluir o cadastro.');
+      }
+      try {
+        const payload: PendingRepSelfRegister = {
+          mode: 'self_register',
+          name: registerExtra.name.trim(),
+          email: trimmed,
+          phone: registerExtra.phone?.trim(),
+        };
+        localStorage.setItem(PENDING_REP_SELF_REGISTER, JSON.stringify(payload));
+      } catch {
+        throw new Error('Não foi possível salvar os dados do cadastro. Verifique o armazenamento do navegador.');
+      }
+    } else {
+      try {
+        localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: trimmed,
+      options: {
+        shouldCreateUser: mode === 'register',
+        emailRedirectTo: redirectTo,
+      },
+    });
+    if (error) {
+      if (mode === 'register') {
+        try {
+          localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+        } catch {
+          /* ignore */
+        }
+      }
+      throw new Error(normalizeAuthError(error.message));
+    }
+  };
+
+  const signInWithOAuthProvider = async (
+    provider: 'google' | 'facebook' | 'apple',
+    pending?: PendingRepSelfRegister | null
+  ) => {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Login social só está disponível quando o Supabase estiver configurado.');
+    }
+    try {
+      if (pending) {
+        localStorage.setItem(PENDING_REP_SELF_REGISTER, JSON.stringify(pending));
+      } else {
+        localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+      }
+    } catch {
+      throw new Error('Não foi possível preparar o cadastro. Verifique o armazenamento do navegador.');
+    }
+
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: redirectTo ?? undefined,
+        skipBrowserRedirect: false,
+      },
+    });
+    if (error) {
+      try {
+        localStorage.removeItem(PENDING_REP_SELF_REGISTER);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(normalizeAuthError(error.message));
     }
   };
 
@@ -223,7 +433,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         );
       }
 
-      // Cria perfil em profiles para o login funcionar (id, name, email, role representante).
       await ensureProfile(data.user.id, input.name, input.email);
 
       await createRepresentative({
@@ -275,6 +484,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       value={{
         user,
         login,
+        signInWithMagicLink,
+        signInWithOAuthProvider,
         registerRepresentative,
         resetPassword,
         logout,

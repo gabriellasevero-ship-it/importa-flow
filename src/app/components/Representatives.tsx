@@ -29,7 +29,9 @@ import {
   updateRepresentative,
   updateRepresentativeStatus,
   deleteRepresentative,
+  sendRepresentativeInvite,
 } from '@/services/representantes';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { useImportadoras } from '@/hooks/useData';
 
 function messageFromUnknownError(e: unknown): string {
@@ -177,8 +179,27 @@ export const Representatives: React.FC = () => {
             importerId: formData.importerId || undefined,
             status: formData.status,
           });
-          setRepresentatives((prev) => [created, ...prev]);
-          toast.success('Representante cadastrado com sucesso!');
+          if (isSupabaseConfigured()) {
+            try {
+              await sendRepresentativeInvite(created.id);
+              setRepresentatives((prev) => [created, ...prev]);
+              toast.success(
+                'Representante cadastrado! Enviamos um e-mail com link mágico para acessar a plataforma (sem precisar criar senha).'
+              );
+            } catch (inviteErr) {
+              console.error(inviteErr);
+              setRepresentatives((prev) => [created, ...prev]);
+              const inviteDetail = messageFromUnknownError(inviteErr);
+              toast.error(
+                inviteDetail
+                  ? `Representante salvo, mas o convite não foi enviado: ${inviteDetail}`
+                  : 'Representante salvo, mas o convite por e-mail falhou. Verifique a função invite-representative no Supabase e as URLs de redirecionamento.'
+              );
+            }
+          } else {
+            setRepresentatives((prev) => [created, ...prev]);
+            toast.success('Representante cadastrado com sucesso!');
+          }
         }
         setShowDialog(false);
       } catch (e) {

@@ -20,6 +20,7 @@ import { ClientCatalogView } from '@/app/components/ClientCatalogView';
 import { Notifications } from '@/app/components/Notifications';
 import { Importers } from '@/app/components/Importers';
 import { Representatives } from '@/app/components/Representatives';
+import { SetPassword } from '@/app/components/SetPassword';
 import { Transportadoras } from '@/app/components/Transportadoras';
 import { Product } from '@/types';
 import { Sidebar } from '@/app/components/Sidebar';
@@ -96,6 +97,17 @@ function AppContent() {
     return (
       <>
         <ClientOrderView linkId={orderLinkId} />
+        <Toaster position="top-center" />
+      </>
+    );
+  }
+
+  const normalizedPath =
+    window.location.pathname.replace(/\/+$/, '') || '/';
+  if (normalizedPath === '/definir-senha') {
+    return (
+      <>
+        <SetPassword />
         <Toaster position="top-center" />
       </>
     );

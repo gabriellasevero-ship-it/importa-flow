@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, syncAuthBeforeDbRead } from '@/lib/supabase';
 
 export type RepresentativeStatus = 'active' | 'pending' | 'suspended';
@@ -117,6 +118,57 @@ export async function fetchRepresentativeByUserId(userId: string): Promise<Repre
   return data ? mapRepresentative(data as DbRepresentative) : null;
 }
 
+async function fetchRepresentanteRowsByEmail(trimmed: string): Promise<DbRepresentative[]> {
+  const { data: exactRows, error: exactErr } = await supabase
+    .from('representantes')
+    .select('*')
+    .eq('email', trimmed);
+  if (exactErr) throw exactErr;
+
+  let rows = (exactRows ?? []) as DbRepresentative[];
+  if (rows.length === 0) {
+    const { data: ilikeRows, error: ilikeErr } = await supabase
+      .from('representantes')
+      .select('*')
+      .ilike('email', trimmed);
+    if (ilikeErr) throw ilikeErr;
+    rows = (ilikeRows ?? []) as DbRepresentative[];
+  }
+  return rows;
+}
+
+/**
+ * Pré-cadastro no backoffice (user_id nulo) ou convite por magic link: associa a linha em
+ * `representantes` ao usuário autenticado quando o e-mail confere.
+ */
+export async function linkRepresentanteByEmailIfUnlinked(
+  userId: string,
+  userEmail: string
+): Promise<void> {
+  const trimmed = userEmail?.trim() ?? '';
+  if (!trimmed || !isSupabaseConfigured()) return;
+
+  const existing = await fetchRepresentativeByUserId(userId);
+  if (existing?.id) return;
+
+  await syncAuthBeforeDbRead();
+  const rows = await fetchRepresentanteRowsByEmail(trimmed);
+  if (rows.length === 0) return;
+
+  const linkedToMe = rows.find((r) => r.user_id === userId);
+  if (linkedToMe) return;
+
+  const unlinked = rows.find((r) => !r.user_id);
+  if (!unlinked) return;
+
+  await requireAuthenticatedSessionForMutation();
+  const { error: updateErr } = await supabase
+    .from('representantes')
+    .update({ user_id: userId })
+    .eq('id', unlinked.id);
+  if (updateErr) throwIfMutationDeniedByRls(updateErr);
+}
+
 /**
  * Para gerar o link do catálogo: usa `user_id`; se não houver (cadastro feito pelo admin sem vínculo),
  * localiza por e-mail igual ao do perfil e preenche `user_id` automaticamente quando a linha ainda está sem conta.
@@ -135,43 +187,8 @@ export async function resolveRepresentativeForCatalogShare(
     return DEMO_REPRESENTATIVES.find((r) => r.userId === userId) ?? null;
   }
 
-  await syncAuthBeforeDbRead();
-
-  const { data: exactRows, error: exactErr } = await supabase
-    .from('representantes')
-    .select('*')
-    .eq('email', trimmed);
-  if (exactErr) throw exactErr;
-
-  let rows = (exactRows ?? []) as DbRepresentative[];
-  if (rows.length === 0) {
-    const { data: ilikeRows, error: ilikeErr } = await supabase
-      .from('representantes')
-      .select('*')
-      .ilike('email', trimmed);
-    if (ilikeErr) throw ilikeErr;
-    rows = (ilikeRows ?? []) as DbRepresentative[];
-  }
-
-  if (rows.length === 0) return null;
-
-  const linkedToMe = rows.find((r) => r.user_id === userId);
-  if (linkedToMe) return mapRepresentative(linkedToMe);
-
-  const unlinked = rows.find((r) => !r.user_id);
-  if (unlinked) {
-    await requireAuthenticatedSessionForMutation();
-    const { data: updated, error: updateErr } = await supabase
-      .from('representantes')
-      .update({ user_id: userId })
-      .eq('id', unlinked.id)
-      .select()
-      .single();
-    if (updateErr) throwIfMutationDeniedByRls(updateErr);
-    return mapRepresentative(updated as DbRepresentative);
-  }
-
-  return null;
+  await linkRepresentanteByEmailIfUnlinked(userId, trimmed);
+  return fetchRepresentativeByUserId(userId);
 }
 
 export async function fetchRepresentatives(): Promise<Representative[]> {
@@ -282,5 +299,47 @@ export async function deleteRepresentative(id: string): Promise<void> {
   await requireAuthenticatedSessionForMutation();
   const { error } = await supabase.from('representantes').delete().eq('id', id);
   if (error) throwIfMutationDeniedByRls(error);
+}
+
+/**
+ * Envia convite por e-mail (Edge Function): magic link para entrar sem senha obrigatória.
+ * Requer função `invite-representative` deployada e template de Magic Link no painel Auth.
+ */
+export async function sendRepresentativeInvite(representativeId: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Convite por e-mail só funciona com Supabase configurado.');
+  }
+  await requireAuthenticatedSessionForMutation();
+
+  const siteUrl =
+    typeof window !== 'undefined' ? window.location.origin.trim() : '';
+  if (!siteUrl) {
+    throw new Error('Não foi possível determinar a URL do site para o convite.');
+  }
+
+  const { data, error } = await supabase.functions.invoke('invite-representative', {
+    body: { representativeId, siteUrl },
+  });
+
+  if (error) {
+    let msg = error.message || 'Falha ao chamar o envio do convite.';
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const body = (await error.context.json()) as { error?: string };
+        if (body?.error?.trim()) msg = body.error.trim();
+      } catch {
+        /* mantém msg */
+      }
+    }
+    throw new Error(msg);
+  }
+
+  const payload = data as { ok?: boolean; error?: string } | null;
+  if (payload?.error) {
+    throw new Error(payload.error);
+  }
+  if (!payload?.ok) {
+    throw new Error('Resposta inválida do servidor ao enviar o convite.');
+  }
 }
 

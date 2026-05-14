@@ -1,0 +1,69 @@
+<!--
+  Convite de representante (backoffice) agora usa Magic Link via API /otp.
+
+  1) No Supabase: Authentication → Email Templates → Magic link
+     Cole o HTML abaixo (substitua o conteúdo padrão se desejar).
+
+  2) Variáveis Go template do Supabase:
+     - {{ .ConfirmationURL }} — botão "Acessar a plataforma"
+     - {{ .SiteURL }}  {{ .Email }}
+
+  3) URL Configuration → Redirect URLs: inclua a URL base do app (ex. https://seu-dominio/ e http://localhost:5173/).
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Importa Flow — seu acesso</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f5;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="padding:32px 28px 8px 28px;text-align:center;">
+              <p style="margin:0;font-size:22px;font-weight:700;color:#18181b;">Importa Flow</p>
+              <p style="margin:8px 0 0;font-size:14px;color:#71717a;">O fluxo que acelera suas vendas</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px 8px 28px;">
+              <p style="margin:0;font-size:18px;font-weight:600;color:#18181b;">Parabéns pelo seu acesso à plataforma!</p>
+              <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#3f3f46;">
+                Você foi cadastrado(a) como representante no <strong>Importa Flow</strong>. Use o botão abaixo para <strong>entrar com um link seguro</strong> — não é necessário criar senha agora (depois você pode adicionar senha ou continuar só com link e redes sociais, conforme a política da sua equipe).
+              </p>
+              <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#3f3f46;">
+                <strong>O que você poderá fazer:</strong>
+              </p>
+              <ul style="margin:12px 0 0;padding-left:20px;font-size:15px;line-height:1.65;color:#3f3f46;">
+                <li>Acessar o catálogo de produtos e montar pedidos para seus clientes.</li>
+                <li>Gerenciar clientes, acompanhar pedidos e comissões.</li>
+                <li>Compartilhar o catálogo digital e agilizar as vendas no dia a dia.</li>
+              </ul>
+              <p style="margin:20px 0 0;font-size:15px;line-height:1.6;color:#3f3f46;">
+                O link expira em poucos minutos por segurança. Se precisar de um novo, peça ao administrador.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 28px 32px 28px;text-align:center;">
+              <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 28px;background-color:#2563eb;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;border-radius:8px;">
+                Acessar a plataforma
+              </a>
+              <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+                Se o botão não funcionar, copie e cole este endereço no navegador:<br />
+                <span style="word-break:break-all;color:#71717a;">{{ .ConfirmationURL }}</span>
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0;font-size:12px;color:#a1a1aa;text-align:center;">
+          Enviado para {{ .Email }}
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
