@@ -39,20 +39,20 @@ export async function createCliente(
 
 /**
  * Login no catálogo público (anon). `representanteRowId` = `representantes.id`.
- * `identifier` = primeiro campo (e-mail ou telefone); `phone` = segundo campo (telefone).
+ * E-mail e CNPJ (14 dígitos) devem coincidir com o cadastro do cliente para esse representante.
  */
 export async function loginClienteCatalogo(
   representanteRowId: string,
-  identifier: string,
-  phone: string
+  email: string,
+  cnpj: string
 ): Promise<Cliente> {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase não configurado.');
   }
   const { data, error } = await supabase.rpc('login_cliente_catalogo', {
     p_representante_row_id: representanteRowId,
-    p_identifier: identifier.trim(),
-    p_phone: phone.trim(),
+    p_email: email.trim(),
+    p_cnpj: cnpj.trim(),
   });
   if (error) throw error;
 
@@ -70,7 +70,8 @@ export async function loginClienteCatalogo(
 /**
  * Cadastro pelo catálogo público (usuário anon). `representanteRowId` é `representantes.id`;
  * a RPC grava `clientes.representante_id` como `representantes.user_id` (profiles).
- * Se já existir cliente com mesmo telefone (dígitos) ou mesmo e-mail para essa representante, retorna o existente.
+ * Se já existir cliente com mesmo CNPJ (14 dígitos) para essa representante, retorna o existente;
+ * senão, deduplica por telefone (dígitos) ou e-mail como antes.
  */
 export async function registerClienteViaCatalogo(
   representanteRowId: string,

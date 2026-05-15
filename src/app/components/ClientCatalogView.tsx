@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, UserPlus, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone } from 'lucide-react';
+import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -19,6 +19,8 @@ import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
 import { buildWhatsAppUrl } from '@/lib/whatsapp';
 import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
+import { formatCnpjInput, onlyDigits } from '@/lib/cnpj';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { fetchRepresentativeById } from '@/services/representantes';
 import { toast } from 'sonner';
 import { Truck } from 'lucide-react';
@@ -129,10 +131,10 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     state: '',
   });
 
-  // Dados de login
+  // Dados de login (e-mail + CNPJ, alinhado ao RPC login_cliente_catalogo)
   const [loginData, setLoginData] = useState({
     email: '',
-    phone: '',
+    cnpj: '',
   });
 
   /** Após login/cadastro, reabrir o diálogo "Confirmar Pedido" (fluxo vindo do carrinho ou do envio). */
@@ -386,14 +388,6 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                   >
                     <LogIn className="w-4 h-4 mr-2" />
                     Entrar
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setShowRegisterDialog(true)}
-                  >
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Cadastrar
                   </Button>
                 </>
               )}
@@ -964,25 +958,30 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
           <DialogHeader>
             <DialogTitle>Entrar</DialogTitle>
             <DialogDescription>
-              Use seu e-mail ou telefone para entrar
+              Informe o mesmo e-mail e CNPJ do cadastro (14 dígitos).
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm">E-mail ou Telefone</label>
+              <label className="text-sm">E-mail</label>
               <Input
-                placeholder="seu@email.com ou (00) 00000-0000"
+                type="email"
+                placeholder="seu@email.com"
                 value={loginData.email}
                 onChange={(e) => setLoginData({ ...loginData, email: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm">Telefone</label>
+              <label className="text-sm">CNPJ</label>
               <Input
-                placeholder="(00) 00000-0000"
-                value={loginData.phone}
-                onChange={(e) => setLoginData({ ...loginData, phone: e.target.value })}
+                placeholder="00.000.000/0000-00"
+                inputMode="numeric"
+                autoComplete="off"
+                value={loginData.cnpj}
+                onChange={(e) =>
+                  setLoginData({ ...loginData, cnpj: formatCnpjInput(e.target.value) })
+                }
               />
             </div>
             <div className="flex gap-2">
@@ -999,15 +998,19 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               <Button
                 onClick={async () => {
                   try {
-                    await login(loginData.email, loginData.phone, representanteId);
+                    await login(loginData.email, loginData.cnpj, representanteId);
                     setShowLoginDialog(false);
-                    setLoginData({ email: '', phone: '' });
+                    setLoginData({ email: '', cnpj: '' });
                     toast.success('Login realizado com sucesso!');
-                  } catch (error: any) {
-                    toast.error(error.message || 'Erro ao fazer login');
+                  } catch (error: unknown) {
+                    const msg = error instanceof Error ? error.message : 'Erro ao fazer login';
+                    toast.error(msg);
                   }
                 }}
                 className="flex-1 bg-primary"
+                disabled={
+                  !loginData.email.trim() || onlyDigits(loginData.cnpj).length < 14
+                }
               >
                 Entrar
               </Button>
@@ -1063,12 +1066,19 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-sm">CNPJ</label>
+              <label className="text-sm">CNPJ *</label>
               <Input
                 placeholder="00.000.000/0000-00"
+                inputMode="numeric"
+                autoComplete="off"
                 value={registerData.cnpj}
-                onChange={(e) => setRegisterData({ ...registerData, cnpj: e.target.value })}
+                onChange={(e) =>
+                  setRegisterData({ ...registerData, cnpj: formatCnpjInput(e.target.value) })
+                }
               />
+              <p className="text-xs text-muted-foreground">
+                Um mesmo CNPJ gera um único cadastro por representante.
+              </p>
             </div>
             <div className="space-y-2">
               <label className="text-sm">CEP</label>
@@ -1168,7 +1178,14 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                   }
                 }}
                 className="flex-1 bg-primary"
-                disabled={!registerData.name || !registerData.email || !registerData.phone}
+                disabled={
+                  !registerData.name ||
+                  !registerData.email ||
+                  !registerData.phone ||
+                  (isSupabaseConfigured() &&
+                    CATALOG_PATH_UUID_RE.test(representanteId) &&
+                    onlyDigits(registerData.cnpj).length !== 14)
+                }
               >
                 Cadastrar
               </Button>

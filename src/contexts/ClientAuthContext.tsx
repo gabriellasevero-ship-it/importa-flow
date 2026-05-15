@@ -3,11 +3,12 @@ import { Cliente } from '@/types';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
 import { loginClienteCatalogo, registerClienteViaCatalogo } from '@/services/clientes';
+import { onlyDigits } from '@/lib/cnpj';
 
 interface ClientAuthContextType {
   client: Cliente | null;
   register: (data: ClientRegisterData, representanteId?: string) => Promise<{ isNew: boolean }>;
-  login: (identifier: string, phone: string, representanteId?: string) => Promise<void>;
+  login: (email: string, cnpj: string, representanteId?: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -126,10 +127,10 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
     return { isNew: true };
   };
 
-  const login = async (identifier: string, phone: string, representanteId = 'rep-1') => {
+  const login = async (email: string, cnpj: string, representanteId = 'rep-1') => {
     if (isSupabaseConfigured() && CATALOG_PATH_UUID_RE.test(representanteId)) {
       try {
-        const found = await loginClienteCatalogo(representanteId, identifier, phone);
+        const found = await loginClienteCatalogo(representanteId, email, cnpj);
         setClient(found);
         localStorage.setItem('clientAuth', JSON.stringify(found));
         return;
@@ -141,17 +142,17 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
             'Link do catálogo inválido ou representante sem conta vinculada (user_id em representantes). Gere um novo link no catálogo logado como representante ou peça ao admin para vincular seu usuário.'
           );
         }
-        if (msg.includes('identifier_required')) {
-          throw new Error('Informe seu e-mail ou telefone para entrar.');
+        if (msg.includes('email_and_cnpj_required')) {
+          throw new Error('Informe e-mail e CNPJ válidos (14 dígitos) para entrar.');
         }
         if (msg.includes('cliente_not_found')) {
           throw new Error(
-            'Não encontramos seu cadastro para esta representante. Verifique os dados ou faça o cadastro.'
+            'Não encontramos cadastro com este e-mail e CNPJ para esta representante. Verifique os dados ou cadastre-se.'
           );
         }
         if (err.code === 'PGRST202' || msg.includes('Could not find the function')) {
           throw new Error(
-            'Função login_cliente_catalogo não encontrada no PostgREST. Rode a migration 013 no Supabase (SQL Editor) e aguarde ~1 minuto.'
+            'Função login_cliente_catalogo desatualizada no PostgREST. Rode a migration 015 no Supabase (SQL Editor) e aguarde ~1 minuto.'
           );
         }
         if (err.message || err.details) {
@@ -165,27 +166,23 @@ export const ClientAuthProvider: React.FC<ClientAuthProviderProps> = ({ children
 
     const saved = localStorage.getItem('clientAuth');
     if (saved) {
-      const savedClient = JSON.parse(saved) as Cliente & { email?: string; phone?: string };
-      const idTrim = identifier.trim();
-      const phoneTrim = phone.trim();
+      const savedClient = JSON.parse(saved) as Cliente & { email?: string; cnpj?: string };
+      const emailTrim = email.trim();
+      const cnpjDigits = onlyDigits(cnpj);
       const matchEmail =
-        idTrim.includes('@') &&
+        emailTrim.length > 0 &&
         savedClient.email &&
-        savedClient.email.toLowerCase() === idTrim.toLowerCase();
-      const digits = (s: string) => s.replace(/\D/g, '');
-      const matchPhoneField =
-        phoneTrim.length > 0 && digits(savedClient.phone ?? '') === digits(phoneTrim);
-      const matchIdentifierAsPhone =
-        !idTrim.includes('@') &&
-        idTrim.length > 0 &&
-        digits(savedClient.phone ?? '') === digits(idTrim);
-      if (matchEmail || matchPhoneField || matchIdentifierAsPhone) {
+        savedClient.email.toLowerCase() === emailTrim.toLowerCase();
+      const matchCnpj =
+        cnpjDigits.length >= 14 &&
+        onlyDigits(savedClient.cnpj ?? '').slice(0, 14) === cnpjDigits.slice(0, 14);
+      if (matchEmail && matchCnpj) {
         setClient(savedClient as Cliente);
         return;
       }
     }
 
-    throw new Error('Cliente não encontrado. Por favor, faça o cadastro primeiro.');
+    throw new Error('Cliente não encontrado. Verifique e-mail e CNPJ ou faça o cadastro.');
   };
 
   const logout = () => {
