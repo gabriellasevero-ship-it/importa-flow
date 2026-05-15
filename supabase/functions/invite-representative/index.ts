@@ -21,23 +21,79 @@ function jsonResponse(body: unknown, status = 200) {
 
 type AdminClient = ReturnType<typeof createClient>;
 
-/** Envia magic link via API oficial (mesmo fluxo do auth-js), sem PKCE no Edge. */
-async function sendMagicLinkOtp(
+function isExistingUserError(message: string): boolean {
+  const low = message.toLowerCase();
+  return (
+    low.includes("already") ||
+    low.includes("registered") ||
+    low.includes("exists") ||
+    low.includes("user already")
+  );
+}
+
+function isInvalidCredentialsError(message: string): boolean {
+  const low = message.toLowerCase();
+  return (
+    low.includes("invalid login credentials") ||
+    low.includes("invalid_credentials")
+  );
+}
+
+/**
+ * Convite para representante sem conta: inviteUserByEmail (service role).
+ * Se o e-mail já tem conta: magic link via signInWithOtp com anon key (não usar service role no OTP).
+ */
+async function sendRepresentativeAccessEmail(
   admin: AdminClient,
+  supabaseUrl: string,
+  anonKey: string,
   email: string,
   redirectTo: string,
   data: Record<string, string>,
-  createUser: boolean,
 ): Promise<{ error?: string }> {
-  const { error } = await admin.auth.signInWithOtp({
+  const { error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo,
+    data,
+  });
+
+  if (!inviteError) {
+    return {};
+  }
+
+  if (!isExistingUserError(inviteError.message)) {
+    if (!isInvalidCredentialsError(inviteError.message)) {
+      return { error: inviteError.message };
+    }
+    // invite com credencial estranha: segue para magic link com anon
+  }
+
+  const publicClient = createClient(supabaseUrl, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      flowType: "implicit",
+    },
+  });
+
+  const { error: otpError } = await publicClient.auth.signInWithOtp({
     email,
     options: {
-      shouldCreateUser: createUser,
+      shouldCreateUser: false,
       emailRedirectTo: redirectTo,
       data,
     },
   });
-  if (error) return { error: error.message };
+
+  if (otpError) {
+    if (isInvalidCredentialsError(otpError.message)) {
+      return {
+        error:
+          "Não foi possível enviar o link de acesso. Confira se o login por e-mail (magic link) está ativo no Supabase e se a URL do app está em Redirect URLs.",
+      };
+    }
+    return { error: otpError.message };
+  }
+
   return {};
 }
 
@@ -52,7 +108,8 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
     return jsonResponse({ error: "Configuração do servidor incompleta." }, 500);
   }
 
@@ -93,7 +150,6 @@ Deno.serve(async (req) => {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
-      flowType: "implicit",
     },
   });
 
@@ -156,31 +212,22 @@ Deno.serve(async (req) => {
     full_name: rep.name,
   };
 
-  let send = await sendMagicLinkOtp(admin, email, redirectTo, meta, true);
+  const send = await sendRepresentativeAccessEmail(
+    admin,
+    supabaseUrl,
+    anonKey,
+    email,
+    redirectTo,
+    meta,
+  );
 
   if (send.error) {
     const low = send.error.toLowerCase();
-    const exists =
-      low.includes("already") ||
-      low.includes("registered") ||
-      low.includes("exists") ||
-      low.includes("user already");
-    if (exists) {
-      send = await sendMagicLinkOtp(admin, email, redirectTo, meta, false);
-    }
-  }
-
-  if (send.error) {
-    const low = send.error.toLowerCase();
-    if (
-      low.includes("already") ||
-      low.includes("registered") ||
-      low.includes("exists")
-    ) {
+    if (isExistingUserError(send.error)) {
       return jsonResponse(
         {
           error:
-            "Já existe uma conta com este e-mail. Enviamos orientação: use \"Entrar com link\" na tela de login ou \"Esqueci minha senha\" se tiver senha.",
+            "Já existe uma conta com este e-mail. Peça para usar \"Entrar com link\" na tela de login ou \"Esqueci minha senha\" se tiver senha.",
         },
         409,
       );
