@@ -1,4 +1,8 @@
-import { FunctionsFetchError, FunctionsHttpError } from '@supabase/supabase-js';
+import {
+  FunctionsFetchError,
+  FunctionsHttpError,
+  FunctionsRelayError,
+} from '@supabase/supabase-js';
 import {
   getConfiguredSupabaseHost,
   isSupabaseConfigured,
@@ -315,6 +319,16 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
     throw new Error('Convite por e-mail só funciona com Supabase configurado.');
   }
   await requireAuthenticatedSessionForMutation();
+  await syncAuthBeforeDbRead();
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError || !session?.access_token) {
+    throw new Error(
+      'Não foi possível obter a sessão para enviar o convite. Faça login novamente e tente de novo.'
+    );
+  }
 
   const siteUrl =
     typeof window !== 'undefined' ? window.location.origin.trim() : '';
@@ -324,6 +338,9 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
 
   const { data, error } = await supabase.functions.invoke('invite-representative', {
     body: { representativeId, siteUrl },
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+    },
   });
 
   if (error) {
@@ -341,11 +358,30 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
         ].join('')
       );
     }
+    if (error instanceof FunctionsRelayError) {
+      throw new Error(
+        'O Supabase não conseguiu executar a função invite-representative. Tente de novo em instantes; se persistir, verifique o painel do projeto (Edge Functions) ou o status da plataforma.'
+      );
+    }
     let msg = error.message || 'Falha ao chamar o envio do convite.';
     if (error instanceof FunctionsHttpError) {
       try {
-        const body = (await error.context.json()) as { error?: string };
-        if (body?.error?.trim()) msg = body.error.trim();
+        const text = await error.context.text();
+        const trimmed = text.trim();
+        if (trimmed.startsWith('{')) {
+          const body = JSON.parse(trimmed) as {
+            error?: string;
+            msg?: string;
+            message?: string;
+          };
+          msg =
+            body.error?.trim() ||
+            body.msg?.trim() ||
+            body.message?.trim() ||
+            msg;
+        } else if (trimmed) {
+          msg = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
+        }
       } catch {
         /* mantém msg */
       }

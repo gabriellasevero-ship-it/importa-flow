@@ -1,13 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.105.1";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
-
-const API_VERSION = "2024-01-01";
 
 type InviteBody = {
   representativeId?: string;
@@ -21,58 +19,25 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-async function sendMagicLinkEmail(params: {
-  supabaseUrl: string;
-  serviceRoleKey: string;
-  email: string;
-  redirectTo: string;
-  data: Record<string, string>;
-  createUser: boolean;
-}): Promise<{ error?: string }> {
-  const base = params.supabaseUrl.replace(/\/+$/, "");
-  const otpUrl = new URL(`${base}/auth/v1/otp`);
-  otpUrl.searchParams.set("redirect_to", params.redirectTo);
+type AdminClient = ReturnType<typeof createClient>;
 
-  const res = await fetch(otpUrl.toString(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: params.serviceRoleKey,
-      Authorization: `Bearer ${params.serviceRoleKey}`,
-      "X-Supabase-Api-Version": API_VERSION,
+/** Envia magic link via API oficial (mesmo fluxo do auth-js), sem PKCE no Edge. */
+async function sendMagicLinkOtp(
+  admin: AdminClient,
+  email: string,
+  redirectTo: string,
+  data: Record<string, string>,
+  createUser: boolean,
+): Promise<{ error?: string }> {
+  const { error } = await admin.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: createUser,
+      emailRedirectTo: redirectTo,
+      data,
     },
-    body: JSON.stringify({
-      email: params.email,
-      data: params.data,
-      create_user: params.createUser,
-      gotrue_meta_security: {},
-    }),
   });
-
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = (await res.json()) as {
-        msg?: string;
-        error_description?: string;
-        error?: string;
-        message?: string;
-      };
-      msg =
-        j.msg ||
-        j.error_description ||
-        j.message ||
-        j.error ||
-        JSON.stringify(j);
-    } catch {
-      try {
-        msg = await res.text();
-      } catch {
-        /* ignore */
-      }
-    }
-    return { error: msg };
-  }
+  if (error) return { error: error.message };
   return {};
 }
 
@@ -125,7 +90,11 @@ Deno.serve(async (req) => {
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      flowType: "implicit",
+    },
   });
 
   const {
@@ -172,7 +141,7 @@ Deno.serve(async (req) => {
         error:
           "Este representante já está vinculado a uma conta. Ela pode entrar com magic link ou senha na tela de login.",
       },
-      409
+      409,
     );
   }
 
@@ -187,14 +156,7 @@ Deno.serve(async (req) => {
     full_name: rep.name,
   };
 
-  let send = await sendMagicLinkEmail({
-    supabaseUrl,
-    serviceRoleKey,
-    email,
-    redirectTo,
-    data: meta,
-    createUser: true,
-  });
+  let send = await sendMagicLinkOtp(admin, email, redirectTo, meta, true);
 
   if (send.error) {
     const low = send.error.toLowerCase();
@@ -204,14 +166,7 @@ Deno.serve(async (req) => {
       low.includes("exists") ||
       low.includes("user already");
     if (exists) {
-      send = await sendMagicLinkEmail({
-        supabaseUrl,
-        serviceRoleKey,
-        email,
-        redirectTo,
-        data: meta,
-        createUser: false,
-      });
+      send = await sendMagicLinkOtp(admin, email, redirectTo, meta, false);
     }
   }
 
@@ -227,7 +182,7 @@ Deno.serve(async (req) => {
           error:
             "Já existe uma conta com este e-mail. Enviamos orientação: use \"Entrar com link\" na tela de login ou \"Esqueci minha senha\" se tiver senha.",
         },
-        409
+        409,
       );
     }
     console.error(send.error);
