@@ -5,6 +5,7 @@ import { Progress } from '@/app/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { useOrders } from '@/contexts/OrdersContext';
 import { useImportadoras, useCommissions } from '@/hooks/useData';
+import { getRepresentanteCommissionPercent } from '@/lib/representanteCommission';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import type { Order } from '@/types';
@@ -61,18 +62,23 @@ export const Commissions: React.FC = () => {
 
   const calculateCommissionByImportadora = () => {
     return mockImportadoras.map(importadora => {
-      const commission = mockCommissions.find(c => c.importadoraId === importadora.id);
+      const commissionRow = mockCommissions.find(c => c.importadoraId === importadora.id);
+      const pct = getRepresentanteCommissionPercent(
+        importadora.id,
+        mockCommissions,
+        mockImportadoras
+      );
       const allOrders = mockOrders.filter(
         o => o.importadoraId === importadora.id && o.status === 'faturado'
       );
       const filteredOrders = filterOrdersByPeriod(allOrders);
       const totalSales = filteredOrders.reduce((sum, order) => sum + order.total, 0);
-      const totalCommission = totalSales * ((commission?.percentage || 0) / 100);
+      const totalCommission = totalSales * (pct / 100);
 
       return {
         importadora,
-        commission: commission?.percentage || 0,
-        isExclusive: commission?.isExclusive || false,
+        commission: pct,
+        isExclusive: commissionRow?.isExclusive ?? false,
         totalSales,
         totalCommission,
         orderCount: filteredOrders.length,
@@ -94,7 +100,11 @@ export const Commissions: React.FC = () => {
       return;
     }
 
-    const commissionPercentage = mockCommissions.find(c => c.importadoraId === importadoraId)?.percentage || 0;
+    const commissionPercentage = getRepresentanteCommissionPercent(
+      importadoraId,
+      mockCommissions,
+      mockImportadoras
+    );
 
     // Criar CSV
     const headers = ['Pedido', 'Cliente', 'Data', 'Nota Fiscal', 'Valor Total', 'Comissão (%)', 'Valor Comissão', 'Status'];

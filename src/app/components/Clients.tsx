@@ -121,6 +121,11 @@ export const Clients: React.FC = () => {
       toast.error('Preencha os campos obrigatórios');
       return;
     }
+    const cnpjDigits = newClient.cnpj.replace(/\D/g, '');
+    if (cnpjDigits.length !== 14) {
+      toast.error('Informe um CNPJ válido com 14 dígitos.');
+      return;
+    }
     if (!user?.id) {
       toast.error('Sessão inválida. Faça login novamente.');
       return;
@@ -132,7 +137,7 @@ export const Clients: React.FC = () => {
         phone: newClient.phone.trim(),
         email: newClient.email.trim() || undefined,
         businessName: newClient.businessName.trim() || undefined,
-        cnpj: newClient.cnpj.replace(/\D/g, '') || undefined,
+        cnpj: cnpjDigits,
         stateRegistration: newClient.stateRegistration.trim() || undefined,
         cep: newClient.cep.replace(/\D/g, '') || undefined,
         street: newClient.street.trim() || undefined,
@@ -177,7 +182,12 @@ export const Clients: React.FC = () => {
       toast.error('Preencha os campos obrigatórios');
       return;
     }
-    
+    const editCnpjDigits = (editingClient.cnpj ?? '').replace(/\D/g, '');
+    if (editCnpjDigits.length !== 14) {
+      toast.error('Informe um CNPJ válido com 14 dígitos.');
+      return;
+    }
+
     toast.success('Cliente atualizado com sucesso!');
     setSelectedClient(null);
     setEditingClient(null);
@@ -498,9 +508,19 @@ export const Clients: React.FC = () => {
                       <Button
                         size="sm"
                         className="bg-secondary hover:bg-secondary/90"
+                        disabled={
+                          !editingClient?.name?.trim() ||
+                          !editingClient?.phone?.trim() ||
+                          (editingClient.cnpj ?? '').replace(/\D/g, '').length !== 14
+                        }
                         onClick={() => {
                           if (!editingClient?.name || !editingClient?.phone) {
                             toast.error('Preencha os campos obrigatórios');
+                            return;
+                          }
+                          const digits = (editingClient.cnpj ?? '').replace(/\D/g, '');
+                          if (digits.length !== 14) {
+                            toast.error('Informe um CNPJ válido com 14 dígitos.');
                             return;
                           }
                           toast.success('Cliente atualizado com sucesso!');
@@ -620,7 +640,7 @@ export const Clients: React.FC = () => {
 
                       <div className="grid md:grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <label className="text-sm text-muted-foreground">CNPJ</label>
+                          <label className="text-sm text-muted-foreground">CNPJ *</label>
                           <Input
                             value={editingClient.cnpj || ''}
                             onChange={(e) => setEditingClient({ ...editingClient, cnpj: formatCNPJ(e.target.value) })}
@@ -1152,7 +1172,7 @@ export const Clients: React.FC = () => {
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">CNPJ</label>
+                  <label className="text-sm font-medium">CNPJ *</label>
                   <Input
                     placeholder="00.000.000/0000-00"
                     value={newClient.cnpj}
@@ -1268,6 +1288,11 @@ export const Clients: React.FC = () => {
             <Button
               onClick={handleAddClient}
               className="flex-1 bg-secondary hover:bg-secondary/90"
+              disabled={
+                !newClient.name.trim() ||
+                !newClient.phone.trim() ||
+                newClient.cnpj.replace(/\D/g, '').length !== 14
+              }
             >
               Adicionar Cliente
             </Button>

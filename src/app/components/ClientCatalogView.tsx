@@ -1076,9 +1076,6 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                   setRegisterData({ ...registerData, cnpj: formatCnpjInput(e.target.value) })
                 }
               />
-              <p className="text-xs text-muted-foreground">
-                Um mesmo CNPJ gera um único cadastro por representante.
-              </p>
             </div>
             <div className="space-y-2">
               <label className="text-sm">CEP</label>

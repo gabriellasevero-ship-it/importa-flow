@@ -32,6 +32,8 @@ interface ImporterView {
   contactEmail: string;
   contactPhone: string;
   cnpj?: string;
+  /** Percentual (0–100) pago às representantes (padrão da importadora). */
+  representanteCommissionPct: number;
 }
 
 function toImporterView(imp: Importadora, productsCount: number): ImporterView {
@@ -43,6 +45,7 @@ function toImporterView(imp: Importadora, productsCount: number): ImporterView {
     contactEmail: '',
     contactPhone: '',
     cnpj: imp.cnpj,
+    representanteCommissionPct: imp.representanteCommissionPct ?? 0,
   };
 }
 
@@ -58,9 +61,10 @@ export const Importers: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     cnpj: '',
+    representanteCommissionPct: '0',
     active: true,
   });
-  const [errors, setErrors] = useState({ name: '', cnpj: '' });
+  const [errors, setErrors] = useState({ name: '', cnpj: '', representanteCommissionPct: '' });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -72,9 +76,14 @@ export const Importers: React.FC = () => {
   );
 
   const validateForm = () => {
-    const newErrors = { name: '', cnpj: '' };
+    const newErrors = { name: '', cnpj: '', representanteCommissionPct: '' };
     if (!formData.name.trim()) newErrors.name = 'Nome é obrigatório';
     if (!formData.cnpj.trim()) newErrors.cnpj = 'CNPJ é obrigatório';
+    const pctRaw = formData.representanteCommissionPct.replace(',', '.').trim();
+    const pct = Number(pctRaw);
+    if (pctRaw === '' || Number.isNaN(pct) || pct < 0 || pct > 100) {
+      newErrors.representanteCommissionPct = 'Informe um percentual entre 0 e 100';
+    }
     setErrors(newErrors);
     return !Object.values(newErrors).some((e) => e !== '');
   };
@@ -86,6 +95,7 @@ export const Importers: React.FC = () => {
       await createImportadora({
         name: formData.name.trim(),
         cnpj: formData.cnpj.trim(),
+        representanteCommissionPct: Number(formData.representanteCommissionPct.replace(',', '.').trim()),
         active: formData.active,
       });
       await refetch();
@@ -106,6 +116,7 @@ export const Importers: React.FC = () => {
     setFormData({
       name: imp.name,
       cnpj: imp.cnpj,
+      representanteCommissionPct: String(imp.representanteCommissionPct ?? 0),
       active: imp.active,
     });
     setShowAddDialog(true);
@@ -118,6 +129,7 @@ export const Importers: React.FC = () => {
       await updateImportadora(editingImporter.id, {
         name: formData.name.trim(),
         cnpj: formData.cnpj.trim(),
+        representanteCommissionPct: Number(formData.representanteCommissionPct.replace(',', '.').trim()),
         active: formData.active,
       });
       await refetch();
@@ -160,8 +172,8 @@ export const Importers: React.FC = () => {
   const closeDialog = () => {
     setShowAddDialog(false);
     setEditingImporter(null);
-    setFormData({ name: '', cnpj: '', active: true });
-    setErrors({ name: '', cnpj: '' });
+    setFormData({ name: '', cnpj: '', representanteCommissionPct: '0', active: true });
+    setErrors({ name: '', cnpj: '', representanteCommissionPct: '' });
   };
 
   const filteredImporters = importersView.filter(
@@ -367,6 +379,25 @@ export const Importers: React.FC = () => {
               />
               {errors.cnpj && (
                 <p className="text-xs text-destructive">{errors.cnpj}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Comissão para representantes (%) *</Label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                placeholder="Ex: 5"
+                value={formData.representanteCommissionPct}
+                onChange={(e) => {
+                  setFormData({ ...formData, representanteCommissionPct: e.target.value });
+                  setErrors({ ...errors, representanteCommissionPct: '' });
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Percentual sobre vendas faturadas quando não houver acordo específico em Comissões.
+              </p>
+              {errors.representanteCommissionPct && (
+                <p className="text-xs text-destructive">{errors.representanteCommissionPct}</p>
               )}
             </div>
             <div className="flex items-center justify-between rounded-lg border p-4">

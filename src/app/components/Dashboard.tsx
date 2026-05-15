@@ -6,6 +6,7 @@ import { Badge } from '@/app/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrders } from '@/contexts/OrdersContext';
 import { useImportadoras, useProducts, useCommissions, useRepresentatives } from '@/hooks/useData';
+import { getRepresentanteCommissionPercent } from '@/lib/representanteCommission';
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
@@ -36,8 +37,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const comissaoEstimada = orders
     .filter(order => order.status === 'faturado')
     .reduce((sum, order) => {
-      const commission = commissions.find(c => c.importadoraId === order.importadoraId);
-      return sum + (order.total * (commission?.percentage || 0) / 100);
+      const pct = getRepresentanteCommissionPercent(
+        order.importadoraId,
+        commissions,
+        importadoras
+      );
+      return sum + (order.total * (pct / 100));
     }, 0);
 
   // Definimos o papel efetivo apenas com base no `mode` vindo da aplicação.

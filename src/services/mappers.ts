@@ -30,6 +30,7 @@ type DbImportadora = {
   id: string;
   name: string;
   cnpj: string;
+  representante_commission_pct?: number | string | null;
   logo: string | null;
   active: boolean;
   created_at: string;
@@ -158,10 +159,19 @@ export function mapProfile(row: DbProfile): User {
 }
 
 export function mapImportadora(row: DbImportadora): Importadora {
+  const raw = row.representante_commission_pct;
+  let representanteCommissionPct = 0;
+  if (raw != null && String(raw).trim() !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n)) {
+      representanteCommissionPct = Math.min(100, Math.max(0, n));
+    }
+  }
   return {
     id: row.id,
     name: row.name,
     cnpj: row.cnpj,
+    representanteCommissionPct,
     logo: row.logo ?? undefined,
     active: row.active,
     createdAt: new Date(row.created_at),

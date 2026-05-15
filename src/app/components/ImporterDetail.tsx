@@ -10,6 +10,8 @@ import {
 import { parseCatalogText } from '@/lib/catalogParser';
 import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
+import { updateImportadora } from '@/services/importadoras';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { uploadCatalogPageImage } from '@/services/storage';
 import type { Product as ApiProduct } from '@/types';
 import { Button } from '@/app/components/ui/button';
@@ -61,6 +63,8 @@ interface Importer {
   contactEmail: string;
   contactPhone: string;
   cnpj?: string;
+  /** Percentual (0–100) pago às representantes (padrão da importadora). */
+  representanteCommissionPct?: number;
 }
 
 interface ImporterDetailProps {
@@ -93,6 +97,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   onDelete,
 }) => {
   const [importer, setImporter] = useState(initialImporter);
+  const [savingImporterInfo, setSavingImporterInfo] = useState(false);
   const { products: apiProducts, loading: productsLoading, refetch: refetchProducts } = useProducts({
     importadoraId: importer.id,
   });
@@ -134,9 +139,28 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [formData, setFormData] = useState({
     name: importer.name,
     cnpj: importer.cnpj || '',
+    representanteCommissionPct: String(importer.representanteCommissionPct ?? 0),
     contactEmail: importer.contactEmail,
     contactPhone: importer.contactPhone,
   });
+
+  useEffect(() => {
+    setImporter(initialImporter);
+    setFormData({
+      name: initialImporter.name,
+      cnpj: initialImporter.cnpj || '',
+      representanteCommissionPct: String(initialImporter.representanteCommissionPct ?? 0),
+      contactEmail: initialImporter.contactEmail,
+      contactPhone: initialImporter.contactPhone,
+    });
+  }, [
+    initialImporter.id,
+    initialImporter.name,
+    initialImporter.cnpj,
+    initialImporter.representanteCommissionPct,
+    initialImporter.contactEmail,
+    initialImporter.contactPhone,
+  ]);
 
   const [productFormData, setProductFormData] = useState({
     code: '',
@@ -191,13 +215,38 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     return 'Não foi possível salvar o produto.';
   };
 
-  const handleSaveInfo = () => {
+  const handleSaveInfo = async () => {
+    const pctRaw = formData.representanteCommissionPct.replace(',', '.').trim();
+    const pct = Number(pctRaw);
+    if (Number.isNaN(pct) || pct < 0 || pct > 100) {
+      toast.error('Percentual de comissão deve ser entre 0 e 100.');
+      return;
+    }
+
+    if (isSupabaseConfigured()) {
+      setSavingImporterInfo(true);
+      try {
+        await updateImportadora(importer.id, {
+          name: formData.name.trim(),
+          cnpj: formData.cnpj.trim(),
+          representanteCommissionPct: pct,
+        });
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível salvar as alterações no servidor.');
+        setSavingImporterInfo(false);
+        return;
+      }
+      setSavingImporterInfo(false);
+    }
+
     const updatedImporter = {
       ...importer,
-      name: formData.name,
+      name: formData.name.trim(),
       cnpj: formData.cnpj,
       contactEmail: formData.contactEmail,
       contactPhone: formData.contactPhone,
+      representanteCommissionPct: pct,
     };
     setImporter(updatedImporter);
     onUpdate(updatedImporter);
@@ -699,6 +748,19 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                     placeholder="00.000.000/0000-00"
                   />
                 </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="commission-pct">Comissão para representantes (%) *</Label>
+                  <Input
+                    id="commission-pct"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Ex: 5"
+                    value={formData.representanteCommissionPct}
+                    onChange={(e) =>
+                      setFormData({ ...formData, representanteCommissionPct: e.target.value })
+                    }
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email de Contato *</Label>
                   <Input
@@ -723,11 +785,12 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               </div>
               <div className="flex justify-end pt-4">
                 <Button
-                  onClick={handleSaveInfo}
+                  onClick={() => void handleSaveInfo()}
                   className="bg-primary hover:bg-primary/90"
+                  disabled={savingImporterInfo}
                 >
                   <Save className="w-4 h-4 mr-2" />
-                  Salvar Alterações
+                  {savingImporterInfo ? 'Salvando…' : 'Salvar Alterações'}
                 </Button>
               </div>
             </CardContent>

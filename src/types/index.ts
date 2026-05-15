@@ -17,6 +17,8 @@ export interface Importadora {
   id: string;
   name: string;
   cnpj: string;
+  /** Percentual (0–100) que a importadora paga às representantes; usado nas comissões se não houver linha em `commissions`. */
+  representanteCommissionPct: number;
   logo?: string;
   active: boolean;
   createdAt: Date;
