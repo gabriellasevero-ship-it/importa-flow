@@ -96,7 +96,7 @@ export async function updateProduct(
     minOrder: number;
     category: string;
     subcategory: string;
-    image: string;
+    image: string | null;
     observations: string;
     active: boolean;
     material: string;
@@ -115,7 +115,7 @@ export async function updateProduct(
   if (updates.minOrder != null) db.min_order = updates.minOrder;
   if (updates.category != null) db.category = updates.category;
   if (updates.subcategory != null) db.subcategory = updates.subcategory;
-  if (updates.image != null) db.image = updates.image;
+  if (updates.image !== undefined) db.image = updates.image;
   if (updates.observations != null) db.observations = updates.observations;
   if (updates.active != null) db.active = updates.active;
   if (updates.material != null) db.material = updates.material;

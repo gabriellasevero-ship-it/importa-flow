@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2, ImageIcon } from 'lucide-react';
 import {
   cropImageBlobRect,
   cropImageBlobVertical,
@@ -12,7 +12,7 @@ import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData'
 import * as productsApi from '@/services/products';
 import { updateImportadora } from '@/services/importadoras';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import { uploadCatalogPageImage } from '@/services/storage';
+import { uploadCatalogPageImage, uploadProductPhoto } from '@/services/storage';
 import type { Product as ApiProduct } from '@/types';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from '@/app/components/ui/select';
 import { Checkbox } from '@/app/components/ui/checkbox';
+
+const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 interface Product {
   id: string;
@@ -123,6 +125,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [catalogProgress, setCatalogProgress] = useState<{ currentPage: number; totalPages: number } | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [productSaving, setProductSaving] = useState(false);
+  const [productImageFile, setProductImageFile] = useState<File | null>(null);
+  const [productImagePreview, setProductImagePreview] = useState<string | null>(null);
+  const [productImageRemoved, setProductImageRemoved] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(() => new Set());
   const [bulkDeleteMode, setBulkDeleteMode] = useState<'selected' | 'all' | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -233,7 +238,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         });
       } catch (e) {
         console.error(e);
-        toast.error('Não foi possível salvar as alterações no servidor.');
+        const msg = e instanceof Error ? e.message : 'Não foi possível salvar as alterações no servidor.';
+        toast.error(msg);
         setSavingImporterInfo(false);
         return;
       }
@@ -253,8 +259,52 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     toast.success('Informações atualizadas com sucesso!');
   };
 
+  const resetProductImageDraft = () => {
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+  };
+
+  const handleProductImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem (JPEG, PNG, WebP ou GIF).');
+      return;
+    }
+    if (file.size > PRODUCT_IMAGE_MAX_BYTES) {
+      toast.error('A imagem deve ter no máximo 5 MB.');
+      return;
+    }
+    setProductImageFile(file);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  };
+
+  const handleRemoveProductImage = () => {
+    setProductImageFile(null);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setProductImageRemoved(true);
+  };
+
   const handleAddProduct = () => {
     setEditingProduct(null);
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
     setProductFormData({
       code: '',
       name: '',
@@ -271,6 +321,12 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return product.image ?? null;
+    });
     setProductFormData({
       code: product.code,
       name: product.name,
@@ -309,7 +365,24 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
     setProductSaving(true);
     try {
+      let uploadedImageUrl: string | undefined;
+      if (productImageFile) {
+        if (!isSupabaseConfigured()) {
+          toast.error('Configure o Supabase para enviar fotos dos produtos.');
+          setProductSaving(false);
+          return;
+        }
+        uploadedImageUrl = await uploadProductPhoto(importer.id, productImageFile);
+      }
+
       if (editingProduct) {
+        const imageUpdate: { image?: string | null } = {};
+        if (uploadedImageUrl) {
+          imageUpdate.image = uploadedImageUrl;
+        } else if (productImageRemoved) {
+          imageUpdate.image = null;
+        }
+
         await productsApi.updateProduct(editingProduct.id, {
           name,
           category,
@@ -318,6 +391,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           material: productFormData.material.trim() || undefined,
           dimensions: productFormData.dimensions.trim() || undefined,
           active: productFormData.published,
+          ...imageUpdate,
         });
         toast.success('Produto atualizado com sucesso!');
       } else {
@@ -331,6 +405,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           material: productFormData.material.trim() || undefined,
           dimensions: productFormData.dimensions.trim() || undefined,
           active: productFormData.published,
+          image: uploadedImageUrl,
         });
         toast.success('Produto adicionado com sucesso!');
       }
@@ -1370,7 +1445,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       </Dialog>
 
       {/* Dialog de Adicionar/Editar Produto */}
-      <Dialog open={showProductDialog} onOpenChange={setShowProductDialog}>
+      <Dialog
+        open={showProductDialog}
+        onOpenChange={(open) => {
+          setShowProductDialog(open);
+          if (!open) resetProductImageDraft();
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
@@ -1484,6 +1565,57 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                   }
                   placeholder="Ex: 27x8 cm"
                 />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="productPhoto">Foto do produto</Label>
+                <div className="flex flex-col sm:flex-row gap-4 items-start">
+                  <div className="w-full sm:w-40 h-40 rounded-lg border bg-muted/30 overflow-hidden flex items-center justify-center shrink-0">
+                    {productImagePreview ? (
+                      <ImageWithFallback
+                        src={productImagePreview}
+                        alt="Pré-visualização do produto"
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-1 p-2 text-muted-foreground">
+                        <ImageIcon className="w-8 h-8 opacity-60" />
+                        <span className="text-xs text-center">Nenhuma foto</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground">
+                      JPEG, PNG, WebP ou GIF. Máximo 5 MB. A foto aparece no catálogo para representantes e
+                      clientes.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="secondary" size="sm" asChild>
+                        <label htmlFor="productPhoto" className="cursor-pointer">
+                          <Upload className="w-4 h-4 mr-2" />
+                          Escolher arquivo
+                        </label>
+                      </Button>
+                      <input
+                        id="productPhoto"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="sr-only"
+                        onChange={handleProductImageFileChange}
+                      />
+                      {(productImagePreview || (editingProduct?.image && !productImageRemoved)) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRemoveProductImage}
+                        >
+                          <X className="w-4 h-4 mr-2" />
+                          Remover foto
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

@@ -103,7 +103,8 @@ export const Importers: React.FC = () => {
       closeDialog();
     } catch (e) {
       console.error(e);
-      toast.error('Não foi possível adicionar a importadora.');
+      const msg = e instanceof Error ? e.message : 'Não foi possível adicionar a importadora.';
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -137,7 +138,8 @@ export const Importers: React.FC = () => {
       closeDialog();
     } catch (e) {
       console.error(e);
-      toast.error('Não foi possível atualizar a importadora.');
+      const msg = e instanceof Error ? e.message : 'Não foi possível atualizar a importadora.';
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
