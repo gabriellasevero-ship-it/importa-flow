@@ -1,5 +1,10 @@
-import { FunctionsHttpError } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured, syncAuthBeforeDbRead } from '@/lib/supabase';
+import { FunctionsFetchError, FunctionsHttpError } from '@supabase/supabase-js';
+import {
+  getConfiguredSupabaseHost,
+  isSupabaseConfigured,
+  supabase,
+  syncAuthBeforeDbRead,
+} from '@/lib/supabase';
 
 export type RepresentativeStatus = 'active' | 'pending' | 'suspended';
 
@@ -322,6 +327,20 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
   });
 
   if (error) {
+    if (error instanceof FunctionsFetchError) {
+      const inner =
+        error.context instanceof Error ? error.context.message.trim() : '';
+      const host = getConfiguredSupabaseHost();
+      throw new Error(
+        [
+          'Não foi possível conectar à Edge Function invite-representative (o pedido nem chegou ao Supabase).',
+          inner ? ` Motivo técnico: ${inner}.` : '',
+          host ? ` Projeto configurado: ${host}.` : '',
+          ' Confirme: deploy da função (Dashboard → Edge Functions ou `supabase functions deploy invite-representative`),',
+          ' variáveis VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY corretas, e que rede ou extensões não bloqueiem o domínio do projeto.',
+        ].join('')
+      );
+    }
     let msg = error.message || 'Falha ao chamar o envio do convite.';
     if (error instanceof FunctionsHttpError) {
       try {

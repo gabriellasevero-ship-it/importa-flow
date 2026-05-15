@@ -81,6 +81,7 @@ export const Representatives: React.FC = () => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [editingRepresentative, setEditingRepresentative] = useState<Representative | null>(null);
   const [deletingRepresentative, setDeletingRepresentative] = useState<Representative | null>(null);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
 
@@ -275,6 +276,26 @@ export const Representatives: React.FC = () => {
     void run();
   };
 
+  const handleResendInvite = (rep: Representative) => {
+    void (async () => {
+      try {
+        setResendingInviteId(rep.id);
+        await sendRepresentativeInvite(rep.id);
+        toast.success(`Convite reenviado para ${rep.email}.`);
+      } catch (e) {
+        console.error(e);
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível reenviar o convite: ${detail}`
+            : 'Não foi possível reenviar o convite.'
+        );
+      } finally {
+        setResendingInviteId(null);
+      }
+    })();
+  };
+
   const filteredRepresentatives = representatives.filter((rep) => {
     const matchesSearch =
       rep.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -453,7 +474,19 @@ export const Representatives: React.FC = () => {
                     </div>
 
                     {/* Ações */}
-                    <div className="flex items-center gap-4 ml-4">
+                    <div className="flex flex-wrap items-center justify-end gap-2 md:gap-3 ml-4 shrink-0">
+                      {isSupabaseConfigured() && !rep.userId && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={resendingInviteId === rep.id}
+                          onClick={() => handleResendInvite(rep)}
+                          className="whitespace-nowrap"
+                        >
+                          <Mail className="w-3.5 h-3.5 mr-1.5 shrink-0" />
+                          {resendingInviteId === rep.id ? 'Enviando…' : 'Reenviar convite'}
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
