@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, Package, ShoppingCart, Plus, Minus, X, User, LogIn, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone } from 'lucide-react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { Search, Filter, Package, ShoppingCart, Plus, Minus, X, User, LogIn, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone, ChevronDown } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -10,6 +10,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/app/components/u
 import { Avatar, AvatarFallback, AvatarImage } from '@/app/components/ui/avatar';
 import { Textarea } from '@/app/components/ui/textarea';
 import { MultiSelect } from '@/app/components/ui/multi-select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/app/components/ui/collapsible';
+import { cn } from '@/app/components/ui/utils';
+import { useScrollHeaderVisibility } from '@/hooks/useScrollHeaderVisibility';
 import { useProducts, useImportadoras, useCategories, useTransportadoras } from '@/hooks/useData';
 import { Product, CartItem, Order } from '@/types';
 import { useClientAuth } from '@/contexts/ClientAuthContext';
@@ -114,6 +117,20 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     code: string;
     image?: string;
   } | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const mainHeaderVisible = useScrollHeaderVisibility(true);
+  const mainHeaderRef = useRef<HTMLElement>(null);
+  const [mainHeaderHeight, setMainHeaderHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = mainHeaderRef.current;
+    if (!el) return;
+    const update = () => setMainHeaderHeight(el.getBoundingClientRect().height);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isAuthenticated]);
 
   // Dados de cadastro
   const [registerData, setRegisterData] = useState({
@@ -326,6 +343,14 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     return <Badge className={config.className}>{config.label}</Badge>;
   };
 
+  const hasCatalogFilters =
+    selectedCategory !== 'all' ||
+    selectedSubcategory !== 'all' ||
+    selectedImportadoras.length > 0;
+
+  const stickyToolbarTop =
+    mainHeaderVisible && mainHeaderHeight > 0 ? mainHeaderHeight : 0;
+
   const formatOrderDate = (date: Date | string) => {
     const d = date instanceof Date ? date : new Date(date);
     return d.toLocaleDateString('pt-BR', {
@@ -340,8 +365,14 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-primary text-primary-foreground shadow-lg sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+      <header
+        ref={mainHeaderRef}
+        className={cn(
+          'sticky top-0 z-50 bg-primary text-primary-foreground shadow-lg transition-transform duration-300 ease-in-out will-change-transform',
+          !mainHeaderVisible && 'pointer-events-none -translate-y-full'
+        )}
+      >
+        <div className="mx-auto max-w-7xl px-4 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-10 h-10 bg-white/10 rounded-lg">
@@ -396,10 +427,10 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
         </div>
       </header>
 
-      <div className="border-b border-border bg-muted/40">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-x-8 text-sm">
+      <div className="bg-muted/70">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
           <p className="text-foreground">
-            <span className="font-semibold">Representante: </span>
+            <span className="font-semibold text-foreground/90">Representante: </span>
             <span>{representante.name}</span>
           </p>
           {representante.email ? (
@@ -432,35 +463,62 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
         </div>
       </div>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Title and Cart Button */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="mb-2">Catálogo de Produtos</h2>
-            <p className="text-muted-foreground">
-              Busque e adicione produtos ao carrinho
-            </p>
-          </div>
-          
-          {/* Cart Button */}
-          <Button
-            onClick={() => setShowCart(true)}
-            className="relative bg-primary hover:bg-primary/90"
-          >
-            <ShoppingCart className="w-5 h-5 mr-2" />
-            Carrinho
-            {cart.length > 0 && (
-              <Badge className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0 flex items-center justify-center bg-secondary">
-                {cart.length}
-              </Badge>
-            )}
-          </Button>
-        </div>
+      <div
+        className="sticky z-40 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-sm transition-[top] duration-300 ease-in-out supports-[backdrop-filter]:bg-background/80"
+        style={{ top: stickyToolbarTop }}
+      >
+        <div className="mx-auto max-w-7xl space-y-4 px-4 pb-5 pt-4">
+          <div className="flex items-start justify-between gap-3 overflow-visible">
+            <div className="min-w-0 flex-1 pr-1">
+              <h2 className="mb-2 text-xl font-semibold sm:mb-2.5 sm:text-2xl">Catálogo de Produtos</h2>
+              <p className="text-sm text-muted-foreground">
+                Busque e adicione produtos ao carrinho
+              </p>
+            </div>
 
-        {/* Search and Filters */}
-        <div className="space-y-4">
+            <div className="flex shrink-0 items-center gap-4 pr-2 sm:pr-0">
+              <div className="relative z-50 shrink-0 sm:hidden">
+                <Button
+                  onClick={() => setShowCart(true)}
+                  size="icon"
+                  className="h-9 w-9 bg-primary hover:bg-primary/90"
+                  aria-label="Carrinho"
+                >
+                  <ShoppingCart className="h-4 w-4" />
+                </Button>
+                {cart.length > 0 && (
+                  <span
+                    className="pointer-events-none absolute right-0 top-0 z-[100] flex h-5 min-w-5 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background bg-secondary px-1 text-[11px] font-semibold leading-none text-secondary-foreground shadow-md"
+                    aria-hidden
+                  >
+                    {cart.length > 99 ? '99+' : cart.length}
+                  </span>
+                )}
+              </div>
+
+              <div className="relative z-50 hidden shrink-0 sm:block">
+                <Button
+                  onClick={() => setShowCart(true)}
+                  size="sm"
+                  className="h-10 bg-primary hover:bg-primary/90"
+                >
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Carrinho
+                </Button>
+                {cart.length > 0 && (
+                  <span
+                    className="pointer-events-none absolute right-0 top-0 z-[100] flex h-5 min-w-5 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background bg-secondary px-1 text-xs font-semibold leading-none text-secondary-foreground shadow-md"
+                    aria-hidden
+                  >
+                    {cart.length > 99 ? '99+' : cart.length}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Buscar por nome ou código..."
               value={searchTerm}
@@ -469,25 +527,39 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
             />
             <button
               type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 transition-colors hover:bg-muted"
               title="Buscar por imagem"
               onClick={() => setShowImageSearchDialog(true)}
             >
-              <Camera className="w-5 h-5 text-primary" />
+              <Camera className="h-5 w-5 text-primary" />
             </button>
           </div>
+        </div>
+      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Multi-select Importadoras */}
+      <main className="mx-auto min-w-0 max-w-7xl space-y-6 px-4 pt-5 pb-10">
+        <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen} className="md:hidden">
+          <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border bg-card px-4 py-4 text-left [&[data-state=open]>svg.chevron]:rotate-180">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">Filtros</span>
+              {hasCatalogFilters && (
+                <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-normal">
+                  Ativos
+                </Badge>
+              )}
+            </div>
+            <ChevronDown className="chevron h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pt-4">
             <MultiSelect
-              options={importadorasList.map(imp => ({ value: imp.id, label: imp.name }))}
+              options={importadorasList.map((imp) => ({ value: imp.id, label: imp.name }))}
               selected={selectedImportadoras}
               onChange={setSelectedImportadoras}
               placeholder="Todas as importadoras"
             />
-
-            <Select 
-              value={selectedCategory} 
+            <Select
+              value={selectedCategory}
               onValueChange={(value) => {
                 setSelectedCategory(value);
                 setSelectedSubcategory('all');
@@ -496,163 +568,201 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               <SelectTrigger>
                 <SelectValue placeholder="Todas as categorias" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper" className="z-[100] max-h-[280px]">
                 <SelectItem value="all">Todas as categorias</SelectItem>
-                {categoriesList.map(cat => (
-                  <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+                {categoriesList.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.name}>
+                    {cat.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-
-            <Select 
-              value={selectedSubcategory} 
+            <Select
+              value={selectedSubcategory}
               onValueChange={setSelectedSubcategory}
               disabled={selectedCategory === 'all'}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Todas as subcategorias" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper" className="z-[100] max-h-[280px]">
                 <SelectItem value="all">Todas as subcategorias</SelectItem>
-                {availableSubcategories.map(subcat => (
-                  <SelectItem key={subcat} value={subcat}>{subcat}</SelectItem>
+                {availableSubcategories.map((subcat) => (
+                  <SelectItem key={subcat} value={subcat}>
+                    {subcat}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </CollapsibleContent>
+        </Collapsible>
 
-          {/* Search Info & Results Count */}
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">
-                Buscando em: 
-              </span>
-              {selectedImportadoras.length === 0 ? (
-                <Badge variant="secondary" className="font-normal">
-                  Todas as importadoras ({importadorasList.length})
-                </Badge>
-              ) : (
-                <div className="flex gap-2 flex-wrap">
-                  {selectedImportadoras.map(id => {
-                    const imp = importadorasList.find(i => i.id === id);
-                    return (
-                      <Badge key={id} variant="secondary" className="font-normal">
-                        {imp?.name}
-                      </Badge>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <span className="text-muted-foreground">
-              {filteredProducts.length} produtos encontrados
-            </span>
-          </div>
+        <div className="hidden gap-4 md:grid md:grid-cols-3">
+          <MultiSelect
+            options={importadorasList.map((imp) => ({ value: imp.id, label: imp.name }))}
+            selected={selectedImportadoras}
+            onChange={setSelectedImportadoras}
+            placeholder="Todas as importadoras"
+          />
+          <Select
+            value={selectedCategory}
+            onValueChange={(value) => {
+              setSelectedCategory(value);
+              setSelectedSubcategory('all');
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todas as categorias" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100] max-h-[280px]">
+              <SelectItem value="all">Todas as categorias</SelectItem>
+              {categoriesList.map((cat) => (
+                <SelectItem key={cat.id} value={cat.name}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={selectedSubcategory}
+            onValueChange={setSelectedSubcategory}
+            disabled={selectedCategory === 'all'}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todas as subcategorias" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100] max-h-[280px]">
+              <SelectItem value="all">Todas as subcategorias</SelectItem>
+              {availableSubcategories.map((subcat) => (
+                <SelectItem key={subcat} value={subcat}>
+                  {subcat}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Products Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {filteredProducts.map(product => {
-            const cartItem = cart.find(item => item.productId === product.id);
-            
-            return (
-              <Card key={product.id} className="hover:shadow-lg transition-shadow">
+        <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+            <span className="shrink-0 text-muted-foreground">Buscando em:</span>
+            {selectedImportadoras.length === 0 ? (
+              <Badge variant="secondary" className="font-normal">
+                Todas as importadoras ({importadorasList.length})
+              </Badge>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {selectedImportadoras.map((id) => {
+                  const imp = importadorasList.find((i) => i.id === id);
+                  return (
+                    <Badge key={id} variant="secondary" className="font-normal">
+                      {imp?.name}
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <span className="shrink-0 text-muted-foreground sm:text-right">
+            {filteredProducts.length} produto{filteredProducts.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        <div className="min-w-0 overflow-x-hidden">
+          <div className="grid grid-cols-2 gap-4 sm:gap-5 md:grid-cols-2 lg:grid-cols-4">
+            {filteredProducts.map((product) => (
+              <Card key={product.id} className="relative overflow-hidden transition-shadow hover:shadow-lg">
                 <CardContent className="p-0">
-                  <div
-                    className={`aspect-square bg-gray-50 rounded-t-lg flex items-center justify-center border-b overflow-hidden ${
-                      product.image ? 'cursor-zoom-in' : ''
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setZoomedImage({
-                        productName: product.name,
-                        code: product.code,
-                        image: product.image,
-                      });
-                    }}
-                  >
-                    {product.image ? (
-                      <ImageWithFallback
-                        src={product.image}
-                        alt={product.name}
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <Package className="w-16 h-16 text-muted-foreground" />
-                    )}
-                  </div>
-                  
-                  <div className="p-4 space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">{product.code}</p>
-                    
-                    <div className="inline-block">
-                      <div className="relative bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1 font-bold text-lg">
-                        R$ {product.price.toFixed(2)}
-                        <div className="absolute right-0 top-0 w-0 h-0 border-t-[16px] border-t-transparent border-b-[16px] border-b-transparent border-l-[12px] border-l-orange-400 translate-x-full"></div>
+                  <div className="group relative bg-white p-3 sm:p-4">
+                    <div
+                      className="relative flex aspect-square cursor-zoom-in items-center justify-center overflow-hidden rounded-lg border bg-gray-50"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomedImage({
+                          productName: product.name,
+                          code: product.code,
+                          image: product.image,
+                        });
+                      }}
+                    >
+                      {product.image ? (
+                        <ImageWithFallback
+                          src={product.image}
+                          alt={product.name}
+                          className="h-full w-full object-contain"
+                        />
+                      ) : (
+                        <Package className="h-10 w-10 text-muted-foreground sm:h-16 sm:w-16" />
+                      )}
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/5">
+                        <div className="rounded-full bg-white/90 p-2 opacity-0 transition-opacity group-hover:opacity-100">
+                          <Search className="h-5 w-5 text-primary" />
+                        </div>
                       </div>
                     </div>
+                  </div>
 
-                    <h4 className="text-base font-medium line-clamp-2 min-h-[3rem]">
+                  <div className="space-y-2 p-3 sm:space-y-2.5 sm:p-4">
+                    <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-sm">
+                      {product.code}
+                    </p>
+                    <div className="inline-block max-w-full">
+                      <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
+                        R$ {product.price.toFixed(2)}
+                        <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
+                      </div>
+                    </div>
+                    <h4 className="line-clamp-2 text-xs font-medium sm:min-h-[3rem] sm:text-base">
                       {product.name}
                     </h4>
-
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <p><span className="font-medium">Qtd/Caixa:</span> {product.minOrder} un</p>
+                    <div className="hidden space-y-1 text-xs text-muted-foreground sm:block">
+                      <p>
+                        <span className="font-medium">Qtd/Caixa:</span> {product.minOrder} un
+                      </p>
                       {product.material && (
-                        <p><span className="font-medium">Material:</span> {product.material}</p>
+                        <p>
+                          <span className="font-medium">Material:</span> {product.material}
+                        </p>
+                      )}
+                      {product.dimensions && (
+                        <p>
+                          <span className="font-medium">DIM:</span> {product.dimensions}
+                        </p>
                       )}
                     </div>
-
-                    <Badge variant="outline" className="text-xs font-semibold border-primary/50 text-primary">
-                      {product.importadoraName}
-                    </Badge>
-
-                    {cartItem ? (
-                      <div className="flex items-center gap-2 mt-3">
-                        <Button
-                          onClick={() => updateQuantity(product.id, cartItem.quantity - 1)}
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <span className="flex-1 text-center font-medium">{cartItem.quantity}</span>
-                        <Button
-                          onClick={() => updateQuantity(product.id, cartItem.quantity + 1)}
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        onClick={() => addToCart(product)}
-                        className="w-full mt-3 bg-secondary hover:bg-secondary/90"
-                        size="sm"
+                    <div className="flex items-center gap-2 pt-1 sm:pt-2">
+                      <Badge
+                        variant="outline"
+                        className="max-w-full truncate border-primary/50 text-[10px] font-semibold text-primary sm:text-xs"
                       >
-                        <ShoppingCart className="w-4 h-4 mr-2" />
-                        Adicionar
-                      </Button>
-                    )}
+                        {product.importadoraName}
+                      </Badge>
+                    </div>
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addToCart(product);
+                      }}
+                      className="mt-2 h-8 w-full bg-secondary hover:bg-secondary/90 sm:mt-3 sm:h-9"
+                      size="sm"
+                    >
+                      <ShoppingCart className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+                      <span className="text-xs sm:text-sm">Adicionar</span>
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
-            );
-          })}
+            ))}
+          </div>
         </div>
 
         {filteredProducts.length === 0 && (
-          <div className="text-center py-12">
-            <Package className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-            <p className="text-muted-foreground">
-              Nenhum produto encontrado
-            </p>
+          <div className="py-12 text-center">
+            <Package className="mx-auto mb-3 h-12 w-12 text-muted-foreground" />
+            <p className="text-muted-foreground">Nenhum produto encontrado com os filtros selecionados</p>
           </div>
         )}
       </main>
+
 
       {/* Cart Sidebar */}
       <Sheet open={showCart} onOpenChange={setShowCart}>

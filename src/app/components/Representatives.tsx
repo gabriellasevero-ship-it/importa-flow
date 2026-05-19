@@ -315,7 +315,7 @@ export const Representatives: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
       {/* Header */}
       <div>
         <h2 className="mb-2">Representantes</h2>
@@ -362,8 +362,8 @@ export const Representatives: React.FC = () => {
       </div>
 
       {/* Filters and Search */}
-      <div className="flex flex-col md:flex-row gap-3">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
+        <div className="relative min-w-0 flex-1 sm:min-w-[200px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por nome, e-mail, CPF ou empresa..."
@@ -372,20 +372,26 @@ export const Representatives: React.FC = () => {
             className="pl-10"
           />
         </div>
-        <Select value={statusFilter} onValueChange={(value: any) => setStatusFilter(value)}>
-          <SelectTrigger className="w-full md:w-[200px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os status</SelectItem>
-            <SelectItem value="active">Ativa</SelectItem>
-            <SelectItem value="pending">Pendente</SelectItem>
-            <SelectItem value="suspended">Suspensa</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button onClick={handleAdd} className="bg-primary hover:bg-primary/90">
-          <Plus className="w-4 h-4 mr-2" />
-          Adicionar Representante
+        <div className="w-full shrink-0 sm:w-[200px]">
+          <Select value={statusFilter} onValueChange={(value: any) => setStatusFilter(value)}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100]">
+              <SelectItem value="all">Todos os status</SelectItem>
+              <SelectItem value="active">Ativa</SelectItem>
+              <SelectItem value="pending">Pendente</SelectItem>
+              <SelectItem value="suspended">Suspensa</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          onClick={handleAdd}
+          className="w-full shrink-0 bg-primary hover:bg-primary/90 sm:w-auto"
+        >
+          <Plus className="w-4 h-4 shrink-0 sm:mr-2" />
+          <span className="sm:hidden">Adicionar</span>
+          <span className="hidden sm:inline">Adicionar Representante</span>
         </Button>
       </div>
 
@@ -408,16 +414,16 @@ export const Representatives: React.FC = () => {
             const StatusIcon = statusConfig[rep.status].icon;
             return (
               <Card key={rep.id} className="hover:shadow-md transition-shadow">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-3">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-3">
                       {/* Header com Nome e Status */}
                       <div className="flex items-start gap-3">
                         <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                           <User className="w-6 h-6 text-primary" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
                             <h3 className="font-semibold truncate">{rep.name}</h3>
                             <Badge
                               className={`${statusConfig[rep.status].color} text-white`}
@@ -474,14 +480,14 @@ export const Representatives: React.FC = () => {
                     </div>
 
                     {/* Ações */}
-                    <div className="flex flex-wrap items-center justify-end gap-2 md:gap-3 ml-4 shrink-0">
+                    <div className="flex w-full flex-col gap-2 border-t pt-4 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 sm:border-0 sm:pt-0">
                       {isSupabaseConfigured() && !rep.userId && (
                         <Button
                           variant="secondary"
                           size="sm"
                           disabled={resendingInviteId === rep.id}
                           onClick={() => handleResendInvite(rep)}
-                          className="whitespace-nowrap"
+                          className="w-full whitespace-nowrap sm:w-auto"
                         >
                           <Mail className="w-3.5 h-3.5 mr-1.5 shrink-0" />
                           {resendingInviteId === rep.id ? 'Enviando…' : 'Reenviar convite'}
@@ -491,6 +497,7 @@ export const Representatives: React.FC = () => {
                         variant="outline"
                         size="sm"
                         onClick={() => handleEdit(rep)}
+                        className="w-full sm:w-auto"
                       >
                         Editar
                       </Button>
@@ -500,9 +507,9 @@ export const Representatives: React.FC = () => {
                           handleStatusChange(rep.id, value)
                         }
                       >
-                        <SelectTrigger 
+                        <SelectTrigger
                           className={cn(
-                            "w-[140px]",
+                            "w-full sm:w-[140px]",
                             rep.status === 'active' && "bg-green-50 border-green-200 text-green-700 hover:bg-green-100",
                             rep.status === 'pending' && "bg-yellow-50 border-yellow-200 text-yellow-700 hover:bg-yellow-100",
                             rep.status === 'suspended' && "bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
@@ -510,7 +517,7 @@ export const Representatives: React.FC = () => {
                         >
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper" className="z-[100]">
                           <SelectItem value="active">Ativar</SelectItem>
                           <SelectItem value="pending">Pendente</SelectItem>
                           <SelectItem value="suspended">Suspender</SelectItem>

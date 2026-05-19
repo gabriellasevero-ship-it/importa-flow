@@ -233,7 +233,7 @@ export const Importers: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4">
         <div>
           <h2 className="mb-1">Importadoras</h2>
           <p className="text-muted-foreground">
@@ -242,7 +242,7 @@ export const Importers: React.FC = () => {
         </div>
         <Button
           onClick={() => setShowAddDialog(true)}
-          className="bg-primary hover:bg-primary/90"
+          className="w-full bg-primary hover:bg-primary/90 sm:w-auto sm:self-start"
         >
           <Plus className="w-4 h-4 mr-2" />
           Nova Importadora

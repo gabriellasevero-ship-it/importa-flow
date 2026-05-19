@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Filter, Camera, Package, ShoppingCart, X, Plus, Minus, Trash2, Link as LinkIcon, ShoppingBag, GitCompare, Check, AlertCircle } from 'lucide-react';
+import { Search, Filter, Camera, Package, ShoppingCart, X, Plus, Minus, Trash2, Link as LinkIcon, ShoppingBag, GitCompare, Check, AlertCircle, ChevronDown } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
@@ -9,6 +9,7 @@ import { Textarea } from '@/app/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/app/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/app/components/ui/sheet';
 import { Checkbox } from '@/app/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/app/components/ui/collapsible';
 import { MultiSelect } from '@/app/components/ui/multi-select';
 import { Product } from '@/types';
 import { useImportadoras, useCategories, useProducts, useClientes } from '@/hooks/useData';
@@ -23,11 +24,15 @@ import { toast } from 'sonner';
 interface CatalogProps {
   onProductSelect: (product: Product) => void;
   showCart?: boolean;
+  mainHeaderVisible?: boolean;
+  mainHeaderHeight?: number;
 }
 
 export const Catalog: React.FC<CatalogProps> = ({
   onProductSelect,
-  showCart = false
+  showCart = false,
+  mainHeaderVisible = true,
+  mainHeaderHeight = 0,
 }) => {
   const { user } = useAuth();
   const { items, addItem, updateItem, removeItem, clearCart, getTotal } = useCart();
@@ -53,6 +58,7 @@ export const Catalog: React.FC<CatalogProps> = ({
   const [compareProducts, setCompareProducts] = useState<string[]>([]);
   const [showComparator, setShowComparator] = useState(false);
   const [showImageSearchDialog, setShowImageSearchDialog] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Constante para pedido mínimo
   const MINIMUM_ORDER_VALUE = 3000;
@@ -197,46 +203,90 @@ export const Catalog: React.FC<CatalogProps> = ({
   };
 
   // Verifica se há filtros ou busca ativos para mostrar comparação
-  const hasActiveFilters = 
-    searchTerm !== '' || 
-    selectedCategory !== 'all' || 
-    selectedSubcategory !== 'all' || 
+  const hasCatalogFilters =
+    selectedCategory !== 'all' ||
+    selectedSubcategory !== 'all' ||
     selectedImportadoras.length > 0;
 
+  const hasActiveFilters = 
+    searchTerm !== '' || 
+    hasCatalogFilters;
+
+  const stickyToolbarTop =
+    mainHeaderVisible && mainHeaderHeight > 0 ? mainHeaderHeight : 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="mb-2">Catálogo de Produtos</h2>
-          <p className="text-muted-foreground">
+    <div className="min-w-0 space-y-5 pb-2">
+      <div
+        className="sticky z-40 -mx-4 space-y-4 border-b border-border/60 bg-background/95 px-4 pb-4 pt-1 shadow-sm backdrop-blur-sm transition-[top] duration-300 ease-in-out supports-[backdrop-filter]:bg-background/80"
+        style={{ top: stickyToolbarTop }}
+      >
+      <div className="flex items-start justify-between gap-3 overflow-visible">
+        <div className="min-w-0 flex-1 pr-1">
+          <h2 className="mb-1 text-xl font-semibold sm:mb-2 sm:text-2xl">Catálogo de Produtos</h2>
+          <p className="text-sm text-muted-foreground">
             Busque e adicione produtos ao carrinho
           </p>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Generate Catalog Link Button */}
+
+        <div className="flex shrink-0 items-center gap-4 pr-2 sm:gap-2 sm:pr-0">
           <Button
             onClick={() => setShowLinkDialog(true)}
             variant="outline"
-            className="border-secondary text-secondary hover:bg-secondary/10"
+            size="icon"
+            className="h-9 w-9 border-secondary text-secondary hover:bg-secondary/10 sm:hidden"
+            aria-label="Compartilhar catálogo"
           >
-            <LinkIcon className="w-4 h-4 mr-2" />
-            Compartilhar Catálogo
+            <LinkIcon className="h-4 w-4" />
           </Button>
-          
-          {/* Cart Button */}
-          <Button
-            onClick={() => setCartOpen(true)}
-            className="relative bg-primary hover:bg-primary/90"
-          >
-            <ShoppingCart className="w-5 h-5 mr-2" />
-            Carrinho
+
+          <div className="relative z-50 shrink-0 sm:hidden">
+            <Button
+              onClick={() => setCartOpen(true)}
+              size="icon"
+              className="h-9 w-9 bg-primary hover:bg-primary/90"
+              aria-label="Carrinho"
+            >
+              <ShoppingCart className="h-4 w-4" />
+            </Button>
             {items.length > 0 && (
-              <Badge className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0 flex items-center justify-center bg-secondary">
-                {items.length}
-              </Badge>
+              <span
+                className="pointer-events-none absolute right-0 top-0 z-[100] flex h-5 min-w-5 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background bg-secondary px-1 text-[11px] font-semibold leading-none text-secondary-foreground shadow-md"
+                aria-hidden
+              >
+                {items.length > 99 ? '99+' : items.length}
+              </span>
             )}
+          </div>
+
+          <Button
+            onClick={() => setShowLinkDialog(true)}
+            variant="outline"
+            size="sm"
+            className="hidden h-10 border-secondary text-secondary hover:bg-secondary/10 sm:inline-flex"
+          >
+            <LinkIcon className="mr-2 h-4 w-4" />
+            Compartilhar
           </Button>
+
+          <div className="relative z-50 hidden shrink-0 sm:block">
+            <Button
+              onClick={() => setCartOpen(true)}
+              size="sm"
+              className="h-10 bg-primary hover:bg-primary/90"
+            >
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              Carrinho
+            </Button>
+            {items.length > 0 && (
+              <span
+                className="pointer-events-none absolute right-0 top-0 z-[100] flex h-5 min-w-5 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background bg-secondary px-1 text-xs font-semibold leading-none text-secondary-foreground shadow-md"
+                aria-hidden
+              >
+                {items.length > 99 ? '99+' : items.length}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -258,10 +308,72 @@ export const Catalog: React.FC<CatalogProps> = ({
           <Camera className="w-5 h-5 text-primary" />
         </button>
       </div>
+      </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Multi-select Importadoras */}
+      {/* Filters — mobile: colapsável */}
+      <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen} className="md:hidden">
+        <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border bg-card px-4 py-3 text-left [&[data-state=open]>svg.chevron]:rotate-180">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">Filtros</span>
+            {hasCatalogFilters && (
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-normal">
+                Ativos
+              </Badge>
+            )}
+          </div>
+          <ChevronDown className="chevron h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-3 pt-3 data-[state=closed]:animate-out data-[state=open]:animate-in">
+          <MultiSelect
+            options={importadoras.map(imp => ({ value: imp.id, label: imp.name }))}
+            selected={selectedImportadoras}
+            onChange={setSelectedImportadoras}
+            placeholder="Todas as importadoras"
+          />
+
+          <Select
+            value={selectedCategory}
+            onValueChange={(value) => {
+              setSelectedCategory(value);
+              setSelectedSubcategory('all');
+              setCompareProducts([]);
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todas as categorias" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100] max-h-[280px]">
+              <SelectItem value="all">Todas as categorias</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={selectedSubcategory}
+            onValueChange={(value) => {
+              setSelectedSubcategory(value);
+              setCompareProducts([]);
+            }}
+            disabled={selectedCategory === 'all'}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todas as subcategorias" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100] max-h-[280px]">
+              <SelectItem value="all">Todas as subcategorias</SelectItem>
+              {availableSubcategories.map(subcat => (
+                <SelectItem key={subcat} value={subcat}>{subcat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CollapsibleContent>
+      </Collapsible>
+
+      {/* Filters — desktop */}
+      <div className="hidden gap-3 md:grid md:grid-cols-3">
         <MultiSelect
           options={importadoras.map(imp => ({ value: imp.id, label: imp.name }))}
           selected={selectedImportadoras}
@@ -269,18 +381,18 @@ export const Catalog: React.FC<CatalogProps> = ({
           placeholder="Todas as importadoras"
         />
 
-        <Select 
-          value={selectedCategory} 
+        <Select
+          value={selectedCategory}
           onValueChange={(value) => {
             setSelectedCategory(value);
-            setSelectedSubcategory('all'); // Reset subcategory when category changes
-            setCompareProducts([]); // Clear comparison when category changes
+            setSelectedSubcategory('all');
+            setCompareProducts([]);
           }}
         >
           <SelectTrigger>
             <SelectValue placeholder="Todas as categorias" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent position="popper" className="z-[100] max-h-[280px]">
             <SelectItem value="all">Todas as categorias</SelectItem>
             {categories.map(cat => (
               <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
@@ -288,18 +400,18 @@ export const Catalog: React.FC<CatalogProps> = ({
           </SelectContent>
         </Select>
 
-        <Select 
-          value={selectedSubcategory} 
+        <Select
+          value={selectedSubcategory}
           onValueChange={(value) => {
             setSelectedSubcategory(value);
-            setCompareProducts([]); // Clear comparison when subcategory changes
+            setCompareProducts([]);
           }}
           disabled={selectedCategory === 'all'}
         >
           <SelectTrigger>
             <SelectValue placeholder="Todas as subcategorias" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent position="popper" className="z-[100] max-h-[280px]">
             <SelectItem value="all">Todas as subcategorias</SelectItem>
             {availableSubcategories.map(subcat => (
               <SelectItem key={subcat} value={subcat}>{subcat}</SelectItem>
@@ -309,10 +421,10 @@ export const Catalog: React.FC<CatalogProps> = ({
       </div>
 
       {/* Search Info & Results Count */}
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">
-            Buscando em: 
+      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+          <span className="shrink-0 text-muted-foreground">
+            Buscando em:
           </span>
           {selectedImportadoras.length === 0 ? (
             <Badge variant="secondary" className="font-normal">
@@ -331,13 +443,14 @@ export const Catalog: React.FC<CatalogProps> = ({
             </div>
           )}
         </div>
-        <span className="text-muted-foreground">
-          {filteredProducts.length} produtos encontrados
+        <span className="shrink-0 text-muted-foreground sm:text-right">
+          {filteredProducts.length} produto{filteredProducts.length === 1 ? '' : 's'}
         </span>
       </div>
 
       {/* Product Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="min-w-0 overflow-x-hidden">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-4">
         {filteredProducts.map(product => {
           const isComparable = canCompare(product.id);
           const isSelected = compareProducts.includes(product.id);
@@ -349,9 +462,9 @@ export const Catalog: React.FC<CatalogProps> = ({
           >
             {/* Compare Checkbox - Only shown when filters/search are active */}
             {hasActiveFilters && (
-              <div className="absolute top-2 right-2 z-10">
+              <div className="absolute top-1.5 right-1.5 z-10 sm:top-2 sm:right-2">
                 <div 
-                  className={`bg-white rounded-md p-1.5 shadow-md border ${!isComparable && !isSelected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`rounded-md border bg-white p-1 shadow-md sm:p-1.5 ${!isComparable && !isSelected ? 'opacity-50 cursor-not-allowed' : ''}`}
                   title={!isComparable && !isSelected ? 'Só é possível comparar produtos da mesma categoria e subcategoria' : 'Adicionar à comparação'}
                 >
                   <Checkbox
@@ -367,7 +480,7 @@ export const Catalog: React.FC<CatalogProps> = ({
 
             <CardContent className="p-0">
               {/* Product Image */}
-              <div className="relative bg-white p-4 group">
+              <div className="relative bg-white p-2 group sm:p-4">
                 <div 
                   className="aspect-square bg-gray-50 rounded-lg flex items-center justify-center border relative overflow-hidden cursor-zoom-in"
                   onClick={(e) => {
@@ -386,7 +499,7 @@ export const Catalog: React.FC<CatalogProps> = ({
                       className="w-full h-full object-contain"
                     />
                   ) : (
-                    <Package className="w-16 h-16 text-muted-foreground" />
+                    <Package className="h-10 w-10 text-muted-foreground sm:h-16 sm:w-16" />
                   )}
                   {/* Zoom indicator */}
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
@@ -399,28 +512,27 @@ export const Catalog: React.FC<CatalogProps> = ({
               
               {/* Product Info */}
               <div 
-                className="p-4 space-y-2 cursor-pointer"
+                className="cursor-pointer space-y-1.5 p-2 sm:space-y-2 sm:p-4"
                 onClick={() => onProductSelect(product)}
               >
                 {/* Product Code */}
-                <p className="text-sm font-medium text-muted-foreground">{product.code}</p>
+                <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-sm">{product.code}</p>
                 
                 {/* Price Badge */}
-                <div className="inline-block">
-                  <div className="relative bg-gradient-to-r from-orange-500 to-orange-400 text-white px-3 py-1 font-bold text-lg">
+                <div className="inline-block max-w-full">
+                  <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
                     R$ {product.price.toFixed(2)}
-                    {/* Arrow decoration */}
-                    <div className="absolute right-0 top-0 w-0 h-0 border-t-[16px] border-t-transparent border-b-[16px] border-b-transparent border-l-[12px] border-l-orange-400 translate-x-full"></div>
+                    <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
                   </div>
                 </div>
 
                 {/* Product Name */}
-                <h4 className="text-base font-medium line-clamp-2 min-h-[3rem]">
+                <h4 className="line-clamp-2 text-xs font-medium sm:min-h-[3rem] sm:text-base">
                   {product.name}
                 </h4>
 
                 {/* Product Details */}
-                <div className="text-xs text-muted-foreground space-y-1">
+                <div className="hidden space-y-1 text-xs text-muted-foreground sm:block">
                   <p><span className="font-medium">Qtd/Caixa:</span> {product.minOrder} un</p>
                   {product.material && (
                     <p><span className="font-medium">Material:</span> {product.material}</p>
@@ -431,8 +543,8 @@ export const Catalog: React.FC<CatalogProps> = ({
                 </div>
 
                 {/* Badges */}
-                <div className="flex items-center gap-2 pt-2">
-                  <Badge variant="outline" className="text-xs font-semibold border-primary/50 text-primary">
+                <div className="flex items-center gap-2 pt-1 sm:pt-2">
+                  <Badge variant="outline" className="max-w-full truncate text-[10px] font-semibold border-primary/50 text-primary sm:text-xs">
                     {product.importadoraName}
                   </Badge>
                 </div>
@@ -444,17 +556,19 @@ export const Catalog: React.FC<CatalogProps> = ({
                     addItem(product, 1);
                     toast.success(`${product.name} adicionado ao carrinho`);
                   }}
-                  className="w-full mt-3 bg-secondary hover:bg-secondary/90"
+                  className="mt-2 h-8 w-full bg-secondary hover:bg-secondary/90 sm:mt-3 sm:h-9"
                   size="sm"
                 >
-                  <ShoppingCart className="w-4 h-4 mr-2" />
-                  Adicionar ao Carrinho
+                  <ShoppingCart className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
+                  <span className="text-xs sm:text-sm">Adicionar</span>
                 </Button>
               </div>
             </CardContent>
           </Card>
         );
         })}
+      </div>
+
       </div>
 
       {filteredProducts.length === 0 && (
@@ -698,19 +812,20 @@ export const Catalog: React.FC<CatalogProps> = ({
               </ul>
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                onClick={handleGenerateLink}
-                className="flex-1 bg-primary hover:bg-primary/90"
-              >
-                <LinkIcon className="w-4 h-4 mr-2" />
-                Gerar e Copiar Link
-              </Button>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <Button
                 onClick={() => setShowLinkDialog(false)}
                 variant="outline"
+                className="w-full sm:w-auto"
               >
                 Cancelar
+              </Button>
+              <Button
+                onClick={handleGenerateLink}
+                className="w-full flex-1 bg-primary hover:bg-primary/90"
+              >
+                <LinkIcon className="mr-2 h-4 w-4" />
+                Gerar e Copiar Link
               </Button>
             </div>
           </div>
@@ -747,14 +862,14 @@ export const Catalog: React.FC<CatalogProps> = ({
 
       {/* Floating Compare Button */}
       {compareProducts.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-50">
+        <div className="fixed bottom-20 left-3 right-3 z-50 sm:bottom-6 sm:left-auto sm:right-6 sm:w-auto">
           <Button
             onClick={() => setShowComparator(true)}
             size="lg"
-            className="bg-secondary hover:bg-secondary/90 shadow-lg relative"
+            className="relative w-full bg-secondary shadow-lg hover:bg-secondary/90 sm:w-auto"
           >
-            <GitCompare className="w-5 h-5 mr-2" />
-            Comparar Produtos
+            <GitCompare className="mr-2 h-5 w-5 shrink-0" />
+            <span className="truncate">Comparar</span>
             <Badge className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0 flex items-center justify-center bg-primary">
               {compareProducts.length}
             </Badge>

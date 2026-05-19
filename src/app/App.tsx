@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Toaster } from '@/app/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { useNotifications } from '@/hooks/useData';
+import { useScrollHeaderVisibility } from '@/hooks/useScrollHeaderVisibility';
 import { ClientAuthProvider } from '@/contexts/ClientAuthContext';
 import { CatalogClientsProvider, useCatalogClients } from '@/contexts/CatalogClientsContext';
 import { OrdersProvider } from '@/contexts/OrdersContext';
@@ -69,6 +70,22 @@ function AppContent() {
 
   const isAdmin = user?.role === 'admin' || user?.role === 'backoffice';
   const displayAsAdmin = isAdmin && viewMode === 'admin';
+  const isCatalogTab = activeTab === 'catalog';
+  const mainHeaderVisible = useScrollHeaderVisibility(isCatalogTab);
+  const mainHeaderRef = useRef<HTMLElement>(null);
+  const [mainHeaderHeight, setMainHeaderHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = mainHeaderRef.current;
+    if (!el) return;
+
+    const updateHeight = () => setMainHeaderHeight(el.getBoundingClientRect().height);
+    updateHeight();
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [viewMode, displayAsAdmin, user?.name, isCatalogTab]);
 
   const handleViewModeChange = (mode: 'admin' | 'representante') => {
     setViewMode(mode);
@@ -163,7 +180,13 @@ function AppContent() {
       case 'home':
         return <Dashboard onNavigate={setActiveTab} mode="representante" />;
       case 'catalog':
-        return <Catalog onProductSelect={setSelectedProduct} />;
+        return (
+          <Catalog
+            onProductSelect={setSelectedProduct}
+            mainHeaderVisible={mainHeaderVisible}
+            mainHeaderHeight={mainHeaderHeight}
+          />
+        );
       case 'clients':
         return <Clients />;
       case 'orders':
@@ -215,7 +238,9 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-background">
       <Header
+        ref={mainHeaderRef}
         title={getPageTitle()}
+        visible={mainHeaderVisible}
         onNotificationsClick={() => setShowNotifications(true)}
         unreadNotifications={unreadCount}
         showNotificationsButton={!displayAsAdmin}

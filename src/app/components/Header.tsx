@@ -3,6 +3,7 @@ import { Package, LogOut, User, Bell, LayoutDashboard, UserCircle } from 'lucide
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
+import { cn } from '@/app/components/ui/utils';
 
 interface HeaderProps {
   title?: string;
@@ -11,16 +12,22 @@ interface HeaderProps {
   showNotificationsButton?: boolean;
   viewMode?: 'admin' | 'representante';
   onViewModeChange?: (mode: 'admin' | 'representante') => void;
+  /** Quando false, o header desliza para fora (ex.: catálogo ao rolar para baixo). */
+  visible?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({
-  title,
-  onNotificationsClick,
-  unreadNotifications = 0,
-  showNotificationsButton = false,
-  viewMode,
-  onViewModeChange,
-}) => {
+export const Header = React.forwardRef<HTMLElement, HeaderProps>(function Header(
+  {
+    title,
+    onNotificationsClick,
+    unreadNotifications = 0,
+    showNotificationsButton = false,
+    viewMode,
+    onViewModeChange,
+    visible = true,
+  },
+  ref
+) {
   const { user, logout } = useAuth();
 
   const profileSelector = viewMode !== undefined && onViewModeChange && (
@@ -53,7 +60,13 @@ export const Header: React.FC<HeaderProps> = ({
   );
 
   return (
-    <header className="bg-primary text-primary-foreground shadow-lg sticky top-0 z-50">
+    <header
+      ref={ref}
+      className={cn(
+        'sticky top-0 z-50 bg-primary text-primary-foreground shadow-lg transition-transform duration-300 ease-in-out will-change-transform',
+        !visible && 'pointer-events-none -translate-y-full'
+      )}
+    >
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -111,4 +124,4 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
   );
-};
+});

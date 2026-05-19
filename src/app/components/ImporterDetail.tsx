@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2, ImageIcon } from 'lucide-react';
+import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2, ImageIcon, Settings } from 'lucide-react';
 import {
   cropImageBlobRect,
   cropImageBlobVertical,
@@ -40,6 +40,12 @@ import {
   SelectValue,
 } from '@/app/components/ui/select';
 import { Checkbox } from '@/app/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
 
 const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -751,47 +757,64 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const someVisibleSelected = visibleIds.some((id) => selectedProductIds.has(id));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onBack} className="h-10 w-10 p-0">
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Building2 className="w-6 h-6 text-primary" />
-            </div>
-            <div>
-              <h2 className="mb-0">{importer.name}</h2>
-              <p className="text-sm text-muted-foreground">
-                {products.length} produtos cadastrados
-              </p>
-            </div>
+      <div className="flex items-start gap-3 min-w-0">
+        <Button variant="ghost" onClick={onBack} className="h-10 w-10 shrink-0 p-0">
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+            <Building2 className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="mb-0 truncate text-lg sm:text-2xl">{importer.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              {products.length} produtos cadastrados
+            </p>
           </div>
         </div>
         {onDelete && (
-          <Button
-            variant="destructive"
-            onClick={() => setShowDeleteImporterDialog(true)}
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Excluir Importadora
-          </Button>
+          <DropdownMenu modal>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="relative z-10 h-10 w-10 shrink-0"
+                aria-label="Configurações da importadora"
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={8} className="z-[200]">
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setShowDeleteImporterDialog(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Excluir importadora
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 max-w-2xl">
-          <TabsTrigger value="info">Informações</TabsTrigger>
-          <TabsTrigger value="products">
-            Produtos
-            <Badge variant="secondary" className="ml-2">
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1">
+          <TabsTrigger value="info" className="px-1.5 text-xs sm:px-2 sm:text-sm">
+            Informações
+          </TabsTrigger>
+          <TabsTrigger value="products" className="gap-1 px-1.5 text-xs sm:px-2 sm:text-sm">
+            <span className="truncate">Produtos</span>
+            <Badge variant="secondary" className="h-5 min-w-5 shrink-0 px-1 text-[10px] sm:text-xs">
               {products.length}
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="financial">Financeiro</TabsTrigger>
+          <TabsTrigger value="financial" className="px-1.5 text-xs sm:px-2 sm:text-sm">
+            Financeiro
+          </TabsTrigger>
         </TabsList>
 
         {/* Aba de Informações */}
@@ -861,7 +884,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               <div className="flex justify-end pt-4">
                 <Button
                   onClick={() => void handleSaveInfo()}
-                  className="bg-primary hover:bg-primary/90"
+                  className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
                   disabled={savingImporterInfo}
                 >
                   <Save className="w-4 h-4 mr-2" />
@@ -874,44 +897,47 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
         {/* Aba de Produtos */}
         <TabsContent value="products" className="space-y-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
+          <div className="flex flex-col gap-4">
+            <div>
               <h3 className="text-lg font-semibold">Catálogo de Produtos</h3>
               <p className="text-sm text-muted-foreground">
                 Gerencie os produtos desta importadora
               </p>
             </div>
-            <div className="flex flex-wrap gap-2 justify-end">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <Button
                 type="button"
                 variant="outline"
                 className={
                   showProductDeleteOptions
-                    ? ''
-                    : 'text-destructive border-destructive/40 hover:bg-destructive/10'
+                    ? 'w-full sm:w-auto'
+                    : 'w-full text-destructive border-destructive/40 hover:bg-destructive/10 sm:w-auto'
                 }
                 onClick={toggleProductDeleteOptions}
                 disabled={products.length === 0 && !showProductDeleteOptions}
               >
                 {showProductDeleteOptions ? (
-                  <X className="w-4 h-4 mr-2" />
+                  <X className="w-4 h-4 mr-2 shrink-0" />
                 ) : (
-                  <Trash2 className="w-4 h-4 mr-2" />
+                  <Trash2 className="w-4 h-4 mr-2 shrink-0" />
                 )}
-                {showProductDeleteOptions ? 'Cancelar exclusão' : 'Excluir produtos'}
+                <span className="truncate">
+                  {showProductDeleteOptions ? 'Cancelar exclusão' : 'Excluir produtos'}
+                </span>
               </Button>
               <Button
                 variant="outline"
                 onClick={() => setShowCatalogUploadDialog(true)}
+                className="w-full sm:w-auto"
               >
-                <Upload className="w-4 h-4 mr-2" />
+                <Upload className="w-4 h-4 mr-2 shrink-0" />
                 Upload de Catálogo
               </Button>
               <Button
                 onClick={handleAddProduct}
-                className="bg-primary hover:bg-primary/90"
+                className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
               >
-                <Plus className="w-4 h-4 mr-2" />
+                <Plus className="w-4 h-4 mr-2 shrink-0" />
                 Adicionar Produto
               </Button>
             </div>
@@ -931,7 +957,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           )}
 
           {products.length > 0 && showProductDeleteOptions && (
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:flex-wrap sm:items-center">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="select-visible-products"
@@ -955,17 +981,22 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               <span className="text-sm text-muted-foreground">
                 {selectedProductIds.size} selecionado(s)
               </span>
-              <div className="flex flex-wrap gap-2 sm:ml-auto">
+              <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row sm:flex-wrap">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                  className="w-full text-destructive border-destructive/40 hover:bg-destructive/10 sm:w-auto"
                   disabled={selectedProductIds.size === 0}
                   onClick={() => setBulkDeleteMode('selected')}
                 >
                   Excluir selecionados
                 </Button>
-                <Button variant="destructive" size="sm" onClick={() => setBulkDeleteMode('all')}>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => setBulkDeleteMode('all')}
+                >
                   Excluir todos os produtos
                 </Button>
               </div>
@@ -986,11 +1017,12 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             <div className="space-y-3">
               {filteredProducts.map((product) => (
                 <Card key={product.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-4">
+                  <CardContent className="p-3 sm:p-4">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
                       {showProductDeleteOptions && (
                         <Checkbox
-                          className="shrink-0"
+                          className="mt-1 shrink-0"
                           checked={selectedProductIds.has(product.id)}
                           onCheckedChange={(checked) => {
                             setSelectedProductIds((prev) => {
@@ -1005,7 +1037,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                         />
                       )}
                       {/* Imagem do Produto */}
-                      <div className="relative w-20 h-20 shrink-0 rounded-lg overflow-hidden bg-muted group cursor-pointer">
+                      <div className="relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-muted group sm:h-20 sm:w-20">
                         {product.image ? (
                           <>
                             <ImageWithFallback
@@ -1027,11 +1059,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                         )}
                       </div>
 
-                      {/* Informações do Produto */}
-                      <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
-                        {/* Código e Nome */}
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
                             <Badge variant="outline" className="font-mono text-xs">
                               {product.code}
                             </Badge>
@@ -1047,11 +1076,21 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                               </Badge>
                             )}
                           </div>
-                          <h4 className="font-semibold truncate">{product.name}</h4>
+                          <h4 className="font-semibold leading-snug">{product.name}</h4>
                           <p className="text-xs text-muted-foreground">{product.category}</p>
                         </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-9 w-9 shrink-0 p-0"
+                          onClick={() => handleEditProduct(product)}
+                          title="Editar"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </div>
 
-                        {/* Especificações */}
+                      <div className="grid grid-cols-2 gap-3 border-t pt-3 text-sm sm:grid-cols-3 md:grid-cols-4 md:border-0 md:pt-0">
                         <div className="text-sm space-y-1">
                           <p className="text-muted-foreground">
                             <span className="font-medium text-foreground">{product.quantityPerBox}</span> unid/caixa
@@ -1071,25 +1110,12 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                           </p>
                         </div>
 
-                        {/* Preço */}
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-primary mb-1">
+                        <div className="col-span-2 flex items-center justify-between gap-2 sm:col-span-1 sm:flex-col sm:items-end sm:justify-center">
+                          <span className="text-xs text-muted-foreground sm:hidden">Preço</span>
+                          <div className="text-xl font-bold text-primary sm:text-2xl">
                             R$ {product.price.toFixed(2)}
                           </div>
                         </div>
-                      </div>
-
-                      {/* Ações */}
-                      <div className="flex flex-col gap-3 shrink-0 items-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 w-9 p-0"
-                          onClick={() => handleEditProduct(product)}
-                          title="Editar"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -1106,17 +1132,18 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 <p className="text-muted-foreground max-w-sm mx-auto">
                   Faça o upload de um catálogo em PDF ou adicione produtos manualmente
                 </p>
-                <div className="flex gap-2 justify-center pt-2">
+                <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-center">
                   <Button
                     variant="outline"
                     onClick={() => setShowCatalogUploadDialog(true)}
+                    className="w-full sm:w-auto"
                   >
-                    <Upload className="w-4 h-4 mr-2" />
+                    <Upload className="w-4 h-4 mr-2 shrink-0" />
                     Upload de Catálogo
                   </Button>
                   <Button
                     onClick={handleAddProduct}
-                    className="bg-primary hover:bg-primary/90"
+                    className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     Adicionar Produto
@@ -1292,7 +1319,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               <div className="flex justify-end pt-4">
                 <Button
                   onClick={handleSaveFinancial}
-                  className="bg-primary hover:bg-primary/90"
+                  className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
                 >
                   <Save className="w-4 h-4 mr-2" />
                   Salvar Alterações
@@ -1312,20 +1339,20 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                   {linkedRepresentatives.map((rep) => (
                     <div
                       key={rep.id}
-                      className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+                      className="flex flex-col gap-2 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="w-10 h-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
                           <Users className="w-5 h-5 text-primary" />
                         </div>
-                        <div>
-                          <p className="font-medium">{rep.name}</p>
-                          <p className="text-sm text-muted-foreground">{rep.email}</p>
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{rep.name}</p>
+                          <p className="text-sm text-muted-foreground truncate">{rep.email}</p>
                         </div>
                       </div>
                       <Badge
                         variant={rep.status === 'active' ? 'default' : 'secondary'}
-                        className={rep.status === 'active' ? 'bg-green-600' : ''}
+                        className={`self-start sm:self-center ${rep.status === 'active' ? 'bg-green-600' : ''}`}
                       >
                         {rep.status === 'active' ? 'Ativa' : 'Pendente'}
                       </Badge>
@@ -1642,27 +1669,32 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               </div>
             </div>
           </div>
-          <DialogFooter className="flex items-center justify-between">
+          <DialogFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {editingProduct && (
               <Button
                 variant="destructive"
                 onClick={() => confirmDeleteProduct(editingProduct)}
-                className="mr-auto"
+                className="w-full sm:mr-auto sm:w-auto"
               >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Excluir Produto
+                <Trash2 className="h-4 w-4 shrink-0 sm:mr-2" />
+                Excluir produto
               </Button>
             )}
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShowProductDialog(false)}>
+            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
+              <Button
+                variant="outline"
+                onClick={() => setShowProductDialog(false)}
+                className="w-full"
+                disabled={productSaving}
+              >
                 Cancelar
               </Button>
               <Button
                 onClick={handleSaveProduct}
-                className="bg-primary hover:bg-primary/90"
+                className="w-full bg-primary hover:bg-primary/90"
                 disabled={productSaving}
               >
-                {productSaving ? 'Salvando...' : editingProduct ? 'Atualizar' : 'Adicionar'}
+                {productSaving ? 'Salvando…' : editingProduct ? 'Atualizar' : 'Adicionar'}
               </Button>
             </div>
           </DialogFooter>
