@@ -7,7 +7,8 @@ import { useOrders } from '@/contexts/OrdersContext';
 import { useImportadoras, useCommissions } from '@/hooks/useData';
 import { getRepresentanteCommissionPercent } from '@/lib/representanteCommission';
 import { Badge } from '@/app/components/ui/badge';
-import { Button } from '@/app/components/ui/button';
+import { Button, buttonVariants } from '@/app/components/ui/button';
+import { cn } from '@/app/components/ui/utils';
 import type { Order } from '@/types';
 
 export const Commissions: React.FC = () => {
@@ -136,30 +137,108 @@ export const Commissions: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const exportFullReport = () => {
+    const activeData = commissionData.filter((d) => d.orderCount > 0);
+
+    if (activeData.length === 0) {
+      alert('Não há dados para exportar');
+      return;
+    }
+
+    const periodLabel = {
+      todos: 'Todos',
+      semana: 'Esta Semana',
+      mes: 'Este Mês',
+      ano: 'Este Ano',
+    }[periodFilter];
+
+    const headers = ['Importadora', 'Pedidos', 'Comissão (%)', 'Vendas', 'Comissão Total'];
+    const rows = activeData.map((data) => [
+      data.importadora.name,
+      data.orderCount,
+      `${data.commission}%`,
+      `R$ ${data.totalSales.toFixed(2)}`,
+      `R$ ${data.totalCommission.toFixed(2)}`,
+    ]);
+
+    const csvContent = [
+      `Relatório de Comissões - ${periodLabel}`,
+      '',
+      headers.join(','),
+      ...rows.map((row) => row.join(',')),
+      '',
+      `Total,,,R$ ${totalSales.toFixed(2)},R$ ${totalCommission.toFixed(2)}`,
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute(
+      'download',
+      `relatorio_comissoes_${periodFilter}_${new Date().toISOString().split('T')[0]}.csv`
+    );
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="mb-2">Comissões</h2>
-          <p className="text-muted-foreground">
-            Acompanhe suas comissões por importadora
-          </p>
+    <div className="min-w-0 space-y-5 overflow-x-hidden pb-2">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="min-w-0 flex-1 text-xl font-semibold leading-tight sm:text-2xl">
+            Comissões
+          </h2>
+
+          <div className="flex shrink-0 items-center gap-4">
+            <Select value={periodFilter} onValueChange={(value: 'todos' | 'semana' | 'mes' | 'ano') => setPeriodFilter(value)}>
+              <SelectTrigger
+                className={cn(
+                  buttonVariants({ variant: 'outline', size: 'icon' }),
+                  '!border-border !bg-background dark:!border-input dark:!bg-input/30',
+                  'justify-center p-0 [&_[data-slot=select-value]]:!hidden [&>svg:last-child]:hidden',
+                  'sm:h-10 sm:w-[180px] sm:justify-between sm:px-3 sm:[&_[data-slot=select-value]]:!flex sm:[&>svg:last-child]:block',
+                )}
+                aria-label="Filtrar por período"
+              >
+                <Calendar className="h-4 w-4 shrink-0 sm:mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" className="z-[100]">
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="semana">Esta Semana</SelectItem>
+                <SelectItem value="mes">Este Mês</SelectItem>
+                <SelectItem value="ano">Este Ano</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0 sm:hidden"
+              onClick={exportFullReport}
+              aria-label="Baixar relatório"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="hidden h-10 shrink-0 sm:inline-flex"
+              onClick={exportFullReport}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Baixar Relatório
+            </Button>
+          </div>
         </div>
-        
-        <div className="w-[180px]">
-          <Select value={periodFilter} onValueChange={(value: any) => setPeriodFilter(value)}>
-            <SelectTrigger>
-              <Calendar className="w-4 h-4 mr-2" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos</SelectItem>
-              <SelectItem value="semana">Esta Semana</SelectItem>
-              <SelectItem value="mes">Este Mês</SelectItem>
-              <SelectItem value="ano">Este Ano</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+
+        <p className="text-sm text-muted-foreground">
+          Acompanhe suas comissões por importadora
+        </p>
       </div>
 
       {/* Summary Cards */}
@@ -208,33 +287,33 @@ export const Commissions: React.FC = () => {
             );
 
             return (
-              <div key={data.importadora.id} className="space-y-3 border rounded-lg p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div 
-                    className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
+              <div key={data.importadora.id} className="space-y-3 rounded-lg border p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <div
+                    className="min-w-0 flex-1 cursor-pointer transition-opacity hover:opacity-80"
                     onClick={() => setExpandedImportadoraId(isExpanded ? null : data.importadora.id)}
                   >
-                    <div className="flex items-center gap-2 mb-1">
-                      <h4 className="text-sm">{data.importadora.name}</h4>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <h4 className="text-sm font-medium">{data.importadora.name}</h4>
                       {data.isExclusive && (
-                        <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded">
+                        <span className="rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
                           Exclusiva
                         </span>
                       )}
                       {isExpanded ? (
-                        <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
                       ) : (
-                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {data.orderCount} {data.orderCount === 1 ? 'pedido' : 'pedidos'} • 
+                      {data.orderCount} {data.orderCount === 1 ? 'pedido' : 'pedidos'} •
                       Comissão: {data.commission}%
                     </p>
                   </div>
-                  
-                  <div className="flex items-start gap-3">
-                    <div className="text-right">
+
+                  <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
+                    <div className="text-left sm:text-right">
                       <p className="font-medium" style={{ color: '#10B981' }}>
                         R$ {data.totalCommission.toFixed(2)}
                       </p>
@@ -242,17 +321,18 @@ export const Commissions: React.FC = () => {
                         de R$ {data.totalSales.toFixed(2)}
                       </p>
                     </div>
-                    
+
                     <Button
-                      size="sm"
+                      size="icon"
                       variant="outline"
                       onClick={(e) => {
                         e.stopPropagation();
                         exportImportadoraOrders(data.importadora.id, data.importadora.name);
                       }}
-                      className="shrink-0"
+                      className="h-9 w-9 shrink-0"
+                      aria-label={`Baixar relatório ${data.importadora.name}`}
                     >
-                      <Download className="w-4 h-4" />
+                      <Download className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
@@ -278,25 +358,26 @@ export const Commissions: React.FC = () => {
                       <h5 className="text-sm font-medium">Pedidos Faturados</h5>
                     </div>
                     {importadoraOrders.map((order) => (
-                      <div 
+                      <div
                         key={order.id}
-                        className="flex items-center justify-between p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors"
+                        className="flex flex-col gap-2 rounded-lg bg-muted/30 p-3 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between"
                       >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
                             <p className="text-sm font-medium">Pedido #{order.id}</p>
                             {getOrderStatusBadge(order.status)}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            Cliente: {order.clienteName || 'Sem cliente'} • {new Date(order.createdAt).toLocaleDateString('pt-BR')}
+                            Cliente: {order.clienteName || 'Sem cliente'} •{' '}
+                            {new Date(order.createdAt).toLocaleDateString('pt-BR')}
                           </p>
                           {order.notaFiscal && (
-                            <p className="text-xs text-muted-foreground mt-1">
+                            <p className="mt-1 text-xs text-muted-foreground">
                               NF: {order.notaFiscal}
                             </p>
                           )}
                         </div>
-                        <div className="text-right">
+                        <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-2 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
                           <p className="text-sm font-bold text-primary">
                             R$ {order.total.toFixed(2)}
                           </p>
@@ -340,14 +421,6 @@ export const Commissions: React.FC = () => {
           </div>
         </CardContent>
       </Card>
-
-      {/* Download Button */}
-      <div className="text-right">
-        <Button variant="outline" className="mt-4">
-          <Download className="w-4 h-4 mr-2" />
-          Baixar Relatório
-        </Button>
-      </div>
     </div>
   );
 };

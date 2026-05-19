@@ -7,6 +7,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/app/components/ui/sheet';
 import { Badge } from '@/app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCatalogClients } from '@/contexts/CatalogClientsContext';
@@ -360,7 +366,7 @@ export const Clients: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-5 overflow-x-hidden pb-2">
       {viewMode === 'list' && (
         <>
           <div className="flex items-center justify-between">
@@ -458,87 +464,88 @@ export const Clients: React.FC = () => {
 
       {viewMode === 'client-detail' && selectedClient && editingClient && (
         <>
-          {/* Header with Back Button */}
-          <div className="mb-6 space-y-4">
+          <div className="space-y-4">
             <Button
               variant="ghost"
               size="sm"
+              className="-ml-2 h-8 px-2"
               onClick={() => setViewMode('list')}
             >
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
               Voltar
             </Button>
-            
-            <div className="space-y-2">
-              <h2>{selectedClient.name}</h2>
+
+            <div className="min-w-0">
+              <h2 className="text-xl font-semibold leading-tight sm:text-2xl">{selectedClient.name}</h2>
               {selectedClient.businessName && (
-                <p className="text-sm text-muted-foreground">{selectedClient.businessName}</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">{selectedClient.businessName}</p>
               )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <Card>
+                <CardContent className="p-3 sm:p-4">
+                  <p className="mb-1 text-[10px] text-muted-foreground sm:text-xs">Total Comprado</p>
+                  <p className="text-sm font-bold text-emerald-600 sm:text-lg">
+                    R$ {getClientTotal(selectedClient.id).toFixed(2)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3 sm:p-4">
+                  <p className="mb-1 text-[10px] text-muted-foreground sm:text-xs">Pedidos</p>
+                  <p className="text-sm font-bold sm:text-2xl">
+                    {getClientOrders(selectedClient.id).length}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3 sm:p-4">
+                  <p className="mb-1 text-[10px] text-muted-foreground sm:text-xs">Cliente desde</p>
+                  <p className="text-xs font-medium sm:text-sm">
+                    {selectedClient.createdAt.toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </p>
+                </CardContent>
+              </Card>
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            {/* Client Info Card */}
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Informações do Cliente</CardTitle>
-                  {!isEditingClientInfo ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-base">Informações do Cliente</CardTitle>
+                {!isEditingClientInfo && (
+                  <>
                     <Button
-                      variant="ghost"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 sm:hidden"
+                      onClick={() => setIsEditingClientInfo(true)}
+                      aria-label="Editar cliente"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
                       size="sm"
+                      className="hidden shrink-0 sm:inline-flex"
                       onClick={() => setIsEditingClientInfo(true)}
                     >
-                      <Edit className="w-4 h-4 mr-2" />
+                      <Edit className="mr-2 h-4 w-4" />
                       Editar
                     </Button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setEditingClient({ ...selectedClient });
-                          setIsEditingClientInfo(false);
-                        }}
-                      >
-                        <X className="w-4 h-4 mr-2" />
-                        Cancelar
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="bg-secondary hover:bg-secondary/90"
-                        disabled={
-                          !editingClient?.name?.trim() ||
-                          !editingClient?.phone?.trim() ||
-                          (editingClient.cnpj ?? '').replace(/\D/g, '').length !== 14
-                        }
-                        onClick={() => {
-                          if (!editingClient?.name || !editingClient?.phone) {
-                            toast.error('Preencha os campos obrigatórios');
-                            return;
-                          }
-                          const digits = (editingClient.cnpj ?? '').replace(/\D/g, '');
-                          if (digits.length !== 14) {
-                            toast.error('Informe um CNPJ válido com 14 dígitos.');
-                            return;
-                          }
-                          toast.success('Cliente atualizado com sucesso!');
-                          setSelectedClient({ ...editingClient });
-                          setIsEditingClientInfo(false);
-                        }}
-                      >
-                        Salvar
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {!isEditingClientInfo ? (
-                  // Modo Visualização
-                  <div className="space-y-4">
-                    <div className="grid md:grid-cols-2 gap-4">
+                  </>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!isEditingClientInfo ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <p className="text-xs text-muted-foreground mb-1">Nome</p>
                         <p className="text-sm font-medium">{selectedClient.name}</p>
@@ -551,7 +558,7 @@ export const Clients: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       {selectedClient.cnpj && (
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">CNPJ</p>
@@ -566,7 +573,7 @@ export const Clients: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <p className="text-xs text-muted-foreground mb-1">Telefone</p>
                         <div className="flex items-center gap-2">
@@ -617,239 +624,229 @@ export const Clients: React.FC = () => {
                     )}
                   </div>
                 ) : (
-                  // Modo Edição
-                  <ScrollArea className="max-h-[500px] pr-4">
-                    <div className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm text-muted-foreground">Nome *</label>
+                      <Input
+                        value={editingClient.name}
+                        onChange={(e) => setEditingClient({ ...editingClient, name: e.target.value })}
+                        placeholder="Nome do cliente"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm text-muted-foreground">Nome Fantasia / Razão Social</label>
+                      <Input
+                        value={editingClient.businessName || ''}
+                        onChange={(e) => setEditingClient({ ...editingClient, businessName: e.target.value })}
+                        placeholder="Nome comercial ou razão social"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
-                        <label className="text-sm text-muted-foreground">Nome *</label>
+                        <label className="text-sm text-muted-foreground">CNPJ *</label>
                         <Input
-                          value={editingClient.name}
-                          onChange={(e) => setEditingClient({ ...editingClient, name: e.target.value })}
-                          placeholder="Nome do cliente"
+                          value={editingClient.cnpj || ''}
+                          onChange={(e) => setEditingClient({ ...editingClient, cnpj: formatCNPJ(e.target.value) })}
+                          placeholder="00.000.000/0000-00"
+                          maxLength={18}
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm text-muted-foreground">Nome Fantasia / Razão Social</label>
+                        <label className="text-sm text-muted-foreground">Inscrição Estadual</label>
                         <Input
-                          value={editingClient.businessName || ''}
-                          onChange={(e) => setEditingClient({ ...editingClient, businessName: e.target.value })}
-                          placeholder="Nome comercial ou razão social"
+                          value={editingClient.stateRegistration || ''}
+                          onChange={(e) => setEditingClient({ ...editingClient, stateRegistration: e.target.value })}
+                          placeholder="000.000.000.000"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm text-muted-foreground">Telefone *</label>
+                        <Input
+                          value={editingClient.phone}
+                          onChange={(e) => setEditingClient({ ...editingClient, phone: formatPhone(e.target.value) })}
+                          placeholder="(00) 00000-0000"
+                          maxLength={15}
                         />
                       </div>
 
-                      <div className="grid md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <label className="text-sm text-muted-foreground">CNPJ *</label>
-                          <Input
-                            value={editingClient.cnpj || ''}
-                            onChange={(e) => setEditingClient({ ...editingClient, cnpj: formatCNPJ(e.target.value) })}
-                            placeholder="00.000.000/0000-00"
-                            maxLength={18}
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-sm text-muted-foreground">Inscrição Estadual</label>
-                          <Input
-                            value={editingClient.stateRegistration || ''}
-                            onChange={(e) => setEditingClient({ ...editingClient, stateRegistration: e.target.value })}
-                            placeholder="000.000.000.000"
-                          />
-                        </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-muted-foreground">Email</label>
+                        <Input
+                          type="email"
+                          value={editingClient.email || ''}
+                          onChange={(e) => setEditingClient({ ...editingClient, email: e.target.value })}
+                          placeholder="email@cliente.com"
+                        />
                       </div>
+                    </div>
 
-                      <div className="grid md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <label className="text-sm text-muted-foreground">Telefone *</label>
+                    <div className="border-t pt-4">
+                      <label className="mb-3 block text-sm text-muted-foreground">Endereço</label>
+
+                      <div className="space-y-3">
+                        <Input
+                          placeholder="CEP"
+                          value={editingClient.cep || ''}
+                          onChange={(e) => setEditingClient({ ...editingClient, cep: formatCEP(e.target.value) })}
+                          maxLength={9}
+                        />
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                          <div className="sm:col-span-3">
+                            <Input
+                              placeholder="Rua/Avenida"
+                              value={editingClient.street || ''}
+                              onChange={(e) => setEditingClient({ ...editingClient, street: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Input
+                              placeholder="Número"
+                              value={editingClient.number || ''}
+                              onChange={(e) => setEditingClient({ ...editingClient, number: e.target.value })}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <Input
-                            value={editingClient.phone}
-                            onChange={(e) => setEditingClient({ ...editingClient, phone: formatPhone(e.target.value) })}
-                            placeholder="(00) 00000-0000"
-                            maxLength={15}
+                            placeholder="Complemento"
+                            value={editingClient.complement || ''}
+                            onChange={(e) => setEditingClient({ ...editingClient, complement: e.target.value })}
+                          />
+                          <Input
+                            placeholder="Bairro"
+                            value={editingClient.neighborhood || ''}
+                            onChange={(e) => setEditingClient({ ...editingClient, neighborhood: e.target.value })}
                           />
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="text-sm text-muted-foreground">Email</label>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div className="sm:col-span-2">
+                            <Input
+                              placeholder="Cidade"
+                              value={editingClient.city || ''}
+                              onChange={(e) => setEditingClient({ ...editingClient, city: e.target.value })}
+                            />
+                          </div>
                           <Input
-                            type="email"
-                            value={editingClient.email || ''}
-                            onChange={(e) => setEditingClient({ ...editingClient, email: e.target.value })}
-                            placeholder="email@cliente.com"
+                            placeholder="Estado (UF)"
+                            value={editingClient.state || ''}
+                            onChange={(e) => setEditingClient({ ...editingClient, state: e.target.value.toUpperCase() })}
+                            maxLength={2}
                           />
-                        </div>
-                      </div>
-
-                      <div className="pt-4 border-t">
-                        <label className="text-sm text-muted-foreground mb-3 block">Endereço</label>
-                        
-                        <div className="space-y-3">
-                          <div className="grid md:grid-cols-3 gap-3">
-                            <div className="md:col-span-2">
-                              <Input
-                                placeholder="CEP"
-                                value={editingClient.cep || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, cep: formatCEP(e.target.value) })}
-                                maxLength={9}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid md:grid-cols-4 gap-3">
-                            <div className="md:col-span-3">
-                              <Input
-                                placeholder="Rua/Avenida"
-                                value={editingClient.street || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, street: e.target.value })}
-                              />
-                            </div>
-                            <div>
-                              <Input
-                                placeholder="Número"
-                                value={editingClient.number || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, number: e.target.value })}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid md:grid-cols-2 gap-3">
-                            <div>
-                              <Input
-                                placeholder="Complemento"
-                                value={editingClient.complement || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, complement: e.target.value })}
-                              />
-                            </div>
-                            <div>
-                              <Input
-                                placeholder="Bairro"
-                                value={editingClient.neighborhood || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, neighborhood: e.target.value })}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid md:grid-cols-3 gap-3">
-                            <div className="md:col-span-2">
-                              <Input
-                                placeholder="Cidade"
-                                value={editingClient.city || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, city: e.target.value })}
-                              />
-                            </div>
-                            <div>
-                              <Input
-                                placeholder="Estado (UF)"
-                                value={editingClient.state || ''}
-                                onChange={(e) => setEditingClient({ ...editingClient, state: e.target.value.toUpperCase() })}
-                                maxLength={2}
-                              />
-                            </div>
-                          </div>
                         </div>
                       </div>
                     </div>
-                  </ScrollArea>
+
+                    <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        onClick={() => {
+                          setEditingClient({ ...selectedClient });
+                          setIsEditingClientInfo(false);
+                        }}
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="button"
+                        className="w-full bg-secondary hover:bg-secondary/90 sm:w-auto"
+                        disabled={
+                          !editingClient?.name?.trim() ||
+                          !editingClient?.phone?.trim() ||
+                          (editingClient.cnpj ?? '').replace(/\D/g, '').length !== 14
+                        }
+                        onClick={() => {
+                          if (!editingClient?.name || !editingClient?.phone) {
+                            toast.error('Preencha os campos obrigatórios');
+                            return;
+                          }
+                          const digits = (editingClient.cnpj ?? '').replace(/\D/g, '');
+                          if (digits.length !== 14) {
+                            toast.error('Informe um CNPJ válido com 14 dígitos.');
+                            return;
+                          }
+                          toast.success('Cliente atualizado com sucesso!');
+                          setSelectedClient({ ...editingClient });
+                          setIsEditingClientInfo(false);
+                        }}
+                      >
+                        Salvar
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Statistics Card */}
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-base">Estatísticas</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <p className="text-xs text-muted-foreground mb-2">Total Comprado</p>
-                    <p className="text-3xl font-bold" style={{ color: '#10B981' }}>
-                      R$ {getClientTotal(selectedClient.id).toFixed(2)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Total de Pedidos</p>
-                    <p className="text-2xl font-medium">
-                      {getClientOrders(selectedClient.id).length}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Cliente desde</p>
-                    <p className="text-sm font-medium">
-                      {selectedClient.createdAt.toLocaleDateString('pt-BR', { 
-                        day: '2-digit',
-                        month: 'short', 
-                        year: 'numeric' 
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Orders List */}
-          <Card className="mt-4">
-            <CardHeader>
-              <CardTitle className="text-base">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="w-5 h-5" />
-                  Pedidos do Cliente
-                </div>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShoppingBag className="h-5 w-5" />
+                Pedidos do Cliente
               </CardTitle>
             </CardHeader>
             <CardContent>
               {getClientOrders(selectedClient.id).length === 0 ? (
-                <div className="text-center py-12">
-                  <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                <div className="py-12 text-center">
+                  <FileText className="mx-auto mb-3 h-12 w-12 text-muted-foreground" />
                   <p className="text-muted-foreground">Nenhum pedido encontrado</p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {getClientOrders(selectedClient.id)
                     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-                    .map(order => (
-                    <div 
-                      key={order.id} 
-                      className="flex items-center justify-between p-3 border rounded-lg cursor-pointer hover:bg-muted/30 transition-colors"
-                      onClick={() => {
-                        setSelectedOrder(order);
-                        setViewMode('order-detail');
-                      }}
-                    >
-                      <div className="flex items-center gap-4 flex-1">
-                        <div>
-                          <p className="text-sm font-medium">Pedido #{order.id}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <Building className="w-3 h-3" />
-                              {order.importadoraName}
+                    .map((order) => (
+                      <div
+                        key={order.id}
+                        className="flex cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between"
+                        onClick={() => {
+                          setSelectedOrder(order);
+                          setViewMode('order-detail');
+                        }}
+                      >
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium">Pedido #{order.id}</p>
+                            <div className="shrink-0 sm:hidden">{getOrderStatusBadge(order.status)}</div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <Building className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{order.importadoraName}</span>
                             </div>
-                            <span className="text-xs text-muted-foreground">•</span>
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <Calendar className="w-3 h-3" />
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3 shrink-0" />
                               {order.createdAt.toLocaleDateString('pt-BR')}
                             </div>
-                            <span className="text-xs text-muted-foreground">•</span>
-                            <span className="text-xs text-muted-foreground">
+                            <div className="col-span-2 flex items-center gap-1">
+                              <Package className="h-3 w-3 shrink-0" />
                               {order.items.length} {order.items.length === 1 ? 'produto' : 'produtos'}
-                            </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <p className="text-xs text-muted-foreground mb-1">Valor Total</p>
-                          <p className="text-lg font-bold text-primary">
-                            R$ {order.total.toFixed(2)}
-                          </p>
+
+                        <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
+                          <div>
+                            <p className="text-xs text-muted-foreground">Valor Total</p>
+                            <p className="text-lg font-bold text-primary">
+                              R$ {order.total.toFixed(2)}
+                            </p>
+                          </div>
+                          <div className="hidden sm:block">{getOrderStatusBadge(order.status)}</div>
                         </div>
-                        {getOrderStatusBadge(order.status)}
                       </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               )}
             </CardContent>
@@ -859,20 +856,22 @@ export const Clients: React.FC = () => {
 
       {viewMode === 'order-detail' && selectedOrder && selectedClient && (
         <>
-          {/* Header with Back Button */}
-          <div className="mb-6 space-y-4">
+          <div className="space-y-4">
             <Button
               variant="ghost"
               size="sm"
+              className="-ml-2 h-8 px-2"
               onClick={() => setViewMode('client-detail')}
             >
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
               Voltar para Cliente
             </Button>
-            
+
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h2>Pedido #{selectedOrder.id}</h2>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h2 className="break-all text-xl font-semibold leading-tight sm:text-2xl">
+                  Pedido #{selectedOrder.id}
+                </h2>
                 {getOrderStatusBadge(selectedOrder.status)}
               </div>
               <p className="text-sm text-muted-foreground">
@@ -881,12 +880,12 @@ export const Clients: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-primary/10">
-                    <DollarSign className="w-5 h-5 text-primary" />
+                  <div className="rounded-lg bg-primary/10 p-2">
+                    <DollarSign className="h-5 w-5 text-primary" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Valor Total</p>
@@ -901,8 +900,8 @@ export const Clients: React.FC = () => {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-secondary/10">
-                    <Package className="w-5 h-5 text-secondary" />
+                  <div className="rounded-lg bg-secondary/10 p-2">
+                    <Package className="h-5 w-5 text-secondary" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Total de Itens</p>
@@ -917,8 +916,8 @@ export const Clients: React.FC = () => {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-500/10">
-                    <TrendingUp className="w-5 h-5 text-green-500" />
+                  <div className="rounded-lg bg-green-500/10 p-2">
+                    <TrendingUp className="h-5 w-5 text-green-500" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Comissão Estimada</p>
@@ -931,13 +930,12 @@ export const Clients: React.FC = () => {
             </Card>
           </div>
 
-          {/* Order Info */}
-          <Card className="mb-4">
-            <CardHeader>
+          <Card>
+            <CardHeader className="pb-3">
               <CardTitle className="text-base">Informações do Pedido</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Data de Criação</p>
                   <p className="text-sm">
@@ -1065,16 +1063,38 @@ export const Clients: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Order Items */}
           <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-base">Produtos do Pedido</CardTitle>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 border-secondary/40 text-secondary hover:bg-secondary/10 sm:hidden"
+                      aria-label="Exportar pedido"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="z-[100]">
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'csv')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'pdf')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Select onValueChange={(value) => handleExportOrder(selectedOrder, value)}>
-                  <SelectTrigger className="w-[200px] bg-green-500 hover:bg-green-600 text-white border-green-500 [&>span]:text-white">
+                  <SelectTrigger className="hidden h-9 w-[200px] border-secondary/40 bg-secondary text-white hover:bg-secondary/90 sm:flex [&>span]:text-white">
                     <SelectValue placeholder="Exportar Pedido">
                       <div className="flex items-center gap-2 text-white">
-                        <Download className="w-4 h-4" />
+                        <Download className="h-4 w-4" />
                         <span>Exportar Pedido</span>
                       </div>
                     </SelectValue>
@@ -1082,13 +1102,13 @@ export const Clients: React.FC = () => {
                   <SelectContent>
                     <SelectItem value="csv">
                       <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
+                        <FileText className="h-4 w-4" />
                         <span>Exportar para CSV</span>
                       </div>
                     </SelectItem>
                     <SelectItem value="pdf">
                       <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
+                        <FileText className="h-4 w-4" />
                         <span>Exportar para PDF</span>
                       </div>
                     </SelectItem>
@@ -1098,26 +1118,29 @@ export const Clients: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {/* Cabeçalho da Importadora */}
-                <div className="flex items-center gap-2 pb-2 border-b-2 border-primary/20">
-                  <Building className="w-5 h-5 text-primary" />
+                <div className="flex items-center gap-2 border-b-2 border-primary/20 pb-2">
+                  <Building className="h-5 w-5 text-primary" />
                   <h4 className="text-lg font-semibold text-primary">{selectedOrder.importadoraName}</h4>
                 </div>
 
-                {/* Lista de Produtos */}
                 <div className="space-y-2">
                   {selectedOrder.items.map((item, index) => (
-                    <div key={index} className="flex items-center gap-4 p-3 border rounded-lg">
-                      <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center">
-                        <Package className="w-8 h-8 text-muted-foreground" />
+                    <div
+                      key={index}
+                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
+                    >
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-muted">
+                          <Package className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="mb-1 font-medium">{item.product.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Código: {item.product.code}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <p className="font-medium mb-1">{item.product.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Código: {item.product.code}
-                        </p>
-                      </div>
-                      <div className="text-right">
+                      <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
                         <p className="text-sm text-muted-foreground">
                           {item.quantity}x R$ {item.product.price.toFixed(2)}
                         </p>
@@ -1129,8 +1152,7 @@ export const Clients: React.FC = () => {
                   ))}
                 </div>
 
-                {/* Total do Pedido */}
-                <div className="pt-4 border-t-2 border-primary/30">
+                <div className="border-t-2 border-primary/30 pt-4">
                   <div className="flex items-center justify-between text-lg font-bold">
                     <span>Total do Pedido</span>
                     <span className="text-primary">R$ {selectedOrder.total.toFixed(2)}</span>

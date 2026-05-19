@@ -16,6 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/app/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
 
 type ViewMode = 'list' | 'detail';
 type FilterType = 'all' | 'unread' | 'cliente' | 'representante';
@@ -493,13 +499,13 @@ export const Orders: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-5 overflow-x-hidden pb-2">
       {viewMode === 'list' && (
         <>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <h2>Meus Pedidos</h2>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-semibold sm:text-2xl">Meus Pedidos</h2>
                 {unreadCount > 0 && (
                   <Badge className="bg-red-500">
                     {unreadCount} {unreadCount === 1 ? 'novo' : 'novos'}
@@ -511,13 +517,13 @@ export const Orders: React.FC = () => {
               </p>
             </div>
 
-            {/* Import Button */}
             <Button
               onClick={() => setShowImportDialog(true)}
-              className="bg-secondary hover:bg-secondary/90 flex-shrink-0"
+              className="w-full shrink-0 bg-secondary hover:bg-secondary/90 sm:w-auto"
             >
-              <Upload className="w-4 h-4 mr-2" />
-              Importar Pedido (PDF)
+              <Upload className="mr-2 h-4 w-4" />
+              <span className="sm:hidden">Importar PDF</span>
+              <span className="hidden sm:inline">Importar Pedido (PDF)</span>
             </Button>
           </div>
 
@@ -533,12 +539,13 @@ export const Orders: React.FC = () => {
           </div>
 
           {/* Filters */}
-          <div className="flex flex-wrap gap-3">
-            <div className="flex gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
               <Button
                 variant={filterType === 'all' ? 'default' : 'outline'}
                 onClick={() => setFilterType('all')}
                 size="sm"
+                className="shrink-0"
               >
                 Todos
               </Button>
@@ -546,30 +553,32 @@ export const Orders: React.FC = () => {
                 variant={filterType === 'unread' ? 'default' : 'outline'}
                 onClick={() => setFilterType('unread')}
                 size="sm"
-                className={filterType === 'unread' ? '' : 'border-red-500/30 text-red-500 hover:bg-red-500/10'}
+                className={`shrink-0 ${filterType === 'unread' ? '' : 'border-red-500/30 text-red-500 hover:bg-red-500/10'}`}
               >
-                <Bell className="w-4 h-4 mr-2" />
-                Não Lidos ({unreadCount})
+                <Bell className="mr-1.5 h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">Não lidos ({unreadCount})</span>
               </Button>
               <Button
                 variant={filterType === 'cliente' ? 'default' : 'outline'}
                 onClick={() => setFilterType('cliente')}
                 size="sm"
+                className="shrink-0"
               >
-                <User className="w-4 h-4 mr-2" />
-                De Clientes
+                <User className="mr-1.5 h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">Clientes</span>
               </Button>
               <Button
                 variant={filterType === 'representante' ? 'default' : 'outline'}
                 onClick={() => setFilterType('representante')}
                 size="sm"
+                className="shrink-0 whitespace-nowrap"
               >
-                Criados por Mim
+                Meus pedidos
               </Button>
             </div>
 
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as OrderStatus | 'all')}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -597,37 +606,39 @@ export const Orders: React.FC = () => {
                 className={`hover:shadow-md transition-shadow cursor-pointer ${!order.isRead ? 'border-2 border-primary/50 bg-primary/5' : ''}`}
                 onClick={() => handleOpenOrder(order)}
               >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4 className="font-semibold">Pedido #{order.id}</h4>
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <h4 className="break-all font-semibold leading-tight">
+                          Pedido #{order.id}
+                        </h4>
                         {!order.isRead && (
-                          <Badge className="bg-red-500">
-                            <Bell className="w-3 h-3 mr-1" />
+                          <Badge className="shrink-0 bg-red-500">
+                            <Bell className="mr-1 h-3 w-3" />
                             Novo
                           </Badge>
                         )}
                       </div>
 
-                      <div className="flex flex-wrap gap-2 mb-2">
+                      <div className="flex flex-wrap gap-2">
                         {getOriginBadge(order.origin)}
                         {getOrderStatusBadge(order.status)}
                       </div>
 
-                      <div className="flex flex-wrap gap-3 text-sm text-muted-foreground mb-2">
-                        <div className="flex items-center gap-1">
-                          <Building className="w-3 h-3" />
-                          <span className="text-xs">{order.importadoraName}</span>
+                      <div className="grid grid-cols-1 gap-2 text-sm text-muted-foreground sm:grid-cols-3">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <Building className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate text-xs">{order.importadoraName}</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
-                          <span className="text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs whitespace-nowrap">
                             {order.createdAt.toLocaleDateString('pt-BR')}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Package className="w-3 h-3" />
+                        <div className="flex items-center gap-1.5 sm:col-span-1">
+                          <Package className="h-3.5 w-3.5 shrink-0" />
                           <span className="text-xs">
                             {order.items.length} {order.items.length === 1 ? 'produto' : 'produtos'}
                           </span>
@@ -635,18 +646,23 @@ export const Orders: React.FC = () => {
                       </div>
 
                       {order.clienteName && (
-                        <div className="flex items-center gap-2 mt-2">
-                          <User className="w-4 h-4 text-secondary" />
-                          <span className="text-sm font-semibold text-foreground">{order.clienteName}</span>
+                        <div className="flex min-w-0 items-center gap-2 rounded-md bg-muted/50 px-2.5 py-2">
+                          <User className="h-4 w-4 shrink-0 text-secondary" />
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {order.clienteName}
+                          </span>
                         </div>
                       )}
                     </div>
 
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground mb-1">Valor Total</p>
-                      <p className="text-2xl font-bold text-primary">
-                        R$ {order.total.toFixed(2)}
-                      </p>
+                    <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
+                      <p className="text-xs text-muted-foreground sm:hidden">Valor total</p>
+                      <div className="text-right">
+                        <p className="mb-0.5 hidden text-xs text-muted-foreground sm:block">Valor Total</p>
+                        <p className="text-xl font-bold text-primary sm:text-2xl">
+                          R$ {order.total.toFixed(2)}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -677,20 +693,45 @@ export const Orders: React.FC = () => {
             </Button>
             
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h2>Pedido #{selectedOrder.id}</h2>
-                  {!selectedOrder.isRead && (
-                    <Badge className="bg-red-500">
-                      <Eye className="w-3 h-3 mr-1" />
-                      Acabou de visualizar
-                    </Badge>
-                  )}
-                </div>
-                {getOrderStatusBadge(selectedOrder.status)}
+              <div className="flex min-w-0 flex-wrap items-center gap-2 pr-2">
+                <h2 className="break-all text-xl font-semibold leading-tight sm:text-2xl">
+                  Pedido #{selectedOrder.id}
+                </h2>
+                {!selectedOrder.isRead && (
+                  <Badge className="shrink-0 bg-red-500">
+                    <Eye className="mr-1 h-3 w-3" />
+                    Acabou de visualizar
+                  </Badge>
+                )}
               </div>
-              <div className="flex gap-2">
-                {getOriginBadge(selectedOrder.origin)}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {getOriginBadge(selectedOrder.origin)}
+                  {getOrderStatusBadge(selectedOrder.status)}
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 border-secondary/40 text-secondary hover:bg-secondary/10"
+                      aria-label="Exportar pedido"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="z-[100]">
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'csv')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'pdf')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </div>
@@ -893,33 +934,7 @@ export const Orders: React.FC = () => {
           {/* Order Items */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Produtos do Pedido</CardTitle>
-                <Select onValueChange={(value) => handleExportOrder(selectedOrder, value)}>
-                  <SelectTrigger className="w-[200px] bg-green-500 hover:bg-green-600 text-white border-green-500 [&>span]:text-white">
-                    <SelectValue placeholder="Exportar Pedido">
-                      <div className="flex items-center gap-2 text-white">
-                        <Download className="w-4 h-4" />
-                        <span>Exportar Pedido</span>
-                      </div>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="csv">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
-                        <span>Exportar para CSV</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="pdf">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
-                        <span>Exportar para PDF</span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <CardTitle className="text-base">Produtos do Pedido</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -932,21 +947,24 @@ export const Orders: React.FC = () => {
                 {/* Lista de Produtos */}
                 <div className="space-y-2">
                   {selectedOrder.items.map((item, index) => (
-                    <div key={index} className="flex items-center gap-4 p-3 border rounded-lg">
-                      <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center">
-                        <Package className="w-8 h-8 text-muted-foreground" />
+                    <div
+                      key={index}
+                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
+                    >
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-muted sm:h-16 sm:w-16">
+                          <Package className="h-7 w-7 text-muted-foreground sm:h-8 sm:w-8" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="mb-1 line-clamp-2 font-medium leading-snug">{item.product.name}</p>
+                          <p className="text-xs text-muted-foreground">Código: {item.product.code}</p>
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <p className="font-medium mb-1">{item.product.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Código: {item.product.code}
-                        </p>
-                      </div>
-                      <div className="text-right">
+                      <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
                         <p className="text-sm text-muted-foreground">
                           {item.quantity}x R$ {item.product.price.toFixed(2)}
                         </p>
-                        <p className="font-bold text-primary">
+                        <p className="text-lg font-bold text-primary sm:text-base">
                           R$ {(item.quantity * item.product.price).toFixed(2)}
                         </p>
                       </div>
