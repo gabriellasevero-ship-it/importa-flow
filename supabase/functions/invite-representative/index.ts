@@ -35,13 +35,77 @@ function isInvalidCredentialsError(message: string): boolean {
   const low = message.toLowerCase();
   return (
     low.includes("invalid login credentials") ||
-    low.includes("invalid_credentials")
+    low.includes("invalid_credentials") ||
+    low.includes("invalid credentials")
   );
 }
 
+function otpConfigErrorMessage(): string {
+  return (
+    "Não foi possível enviar o link de acesso. No Supabase: Authentication → Providers → Email (habilitado); " +
+    "URL Configuration → Redirect URLs com a URL do app; e templates Invite user / Magic link configurados."
+  );
+}
+
+type PublicAuthClient = ReturnType<typeof createClient>;
+
+function createPublicAuthClient(supabaseUrl: string, anonKey: string): PublicAuthClient {
+  return createClient(supabaseUrl, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      flowType: "implicit",
+    },
+  });
+}
+
+async function authUserExistsForEmail(
+  admin: AdminClient,
+  email: string,
+): Promise<boolean> {
+  const { data, error } = await admin.auth.admin.getUserByEmail(email);
+  if (error) {
+    const low = (error.message ?? "").toLowerCase();
+    if (low.includes("not found") || low.includes("no user")) {
+      return false;
+    }
+    console.error("getUserByEmail:", error.message);
+    return false;
+  }
+  return !!data?.user;
+}
+
+async function sendMagicLinkOtp(
+  publicClient: PublicAuthClient,
+  email: string,
+  redirectTo: string,
+  data: Record<string, string>,
+  shouldCreateUser: boolean,
+): Promise<{ error?: string }> {
+  const { error: otpError } = await publicClient.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser,
+      emailRedirectTo: redirectTo,
+      data,
+    },
+  });
+
+  if (!otpError) {
+    return {};
+  }
+  if (isInvalidCredentialsError(otpError.message)) {
+    return { error: otpConfigErrorMessage() };
+  }
+  if (isExistingUserError(otpError.message) && shouldCreateUser) {
+    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
+  }
+  return { error: otpError.message };
+}
+
 /**
- * Convite para representante sem conta: inviteUserByEmail (service role).
- * Se o e-mail já tem conta: magic link via signInWithOtp com anon key (não usar service role no OTP).
+ * Pré-cadastro no backoffice (sem conta Auth): inviteUserByEmail ou magic link com criação de usuário.
+ * E-mail já existente no Auth: apenas magic link (shouldCreateUser: false).
  */
 async function sendRepresentativeAccessEmail(
   admin: AdminClient,
@@ -51,6 +115,13 @@ async function sendRepresentativeAccessEmail(
   redirectTo: string,
   data: Record<string, string>,
 ): Promise<{ error?: string }> {
+  const publicClient = createPublicAuthClient(supabaseUrl, anonKey);
+  const userExists = await authUserExistsForEmail(admin, email);
+
+  if (userExists) {
+    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
+  }
+
   const { error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
     redirectTo,
     data,
@@ -60,41 +131,31 @@ async function sendRepresentativeAccessEmail(
     return {};
   }
 
-  if (!isExistingUserError(inviteError.message)) {
-    if (!isInvalidCredentialsError(inviteError.message)) {
-      return { error: inviteError.message };
-    }
-    // invite com credencial estranha: segue para magic link com anon
+  if (isExistingUserError(inviteError.message)) {
+    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
   }
 
-  const publicClient = createClient(supabaseUrl, anonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      flowType: "implicit",
-    },
-  });
+  console.warn(
+    "inviteUserByEmail falhou, tentando magic link com criação de usuário:",
+    inviteError.message,
+  );
 
-  const { error: otpError } = await publicClient.auth.signInWithOtp({
+  const otp = await sendMagicLinkOtp(
+    publicClient,
     email,
-    options: {
-      shouldCreateUser: false,
-      emailRedirectTo: redirectTo,
-      data,
-    },
-  });
-
-  if (otpError) {
-    if (isInvalidCredentialsError(otpError.message)) {
-      return {
-        error:
-          "Não foi possível enviar o link de acesso. Confira se o login por e-mail (magic link) está ativo no Supabase e se a URL do app está em Redirect URLs.",
-      };
-    }
-    return { error: otpError.message };
+    redirectTo,
+    data,
+    true,
+  );
+  if (!otp.error) {
+    return {};
   }
 
-  return {};
+  if (isInvalidCredentialsError(inviteError.message)) {
+    return { error: otp.error };
+  }
+
+  return { error: inviteError.message || otp.error };
 }
 
 Deno.serve(async (req) => {
