@@ -1,12 +1,5 @@
 import {
-  FunctionsFetchError,
-  FunctionsHttpError,
-  FunctionsRelayError,
-} from '@supabase/supabase-js';
-import {
   getConfiguredSupabaseHost,
-  getSupabaseAnonKey,
-  getSupabaseProjectUrl,
   isSupabaseConfigured,
   supabase,
   syncAuthBeforeDbRead,
@@ -325,91 +318,31 @@ function networkInviteErrorMessage(inner: string): string {
   ].join('');
 }
 
-function parseInviteFunctionPayload(
-  data: unknown
-): { ok?: boolean; error?: string } | null {
-  if (data && typeof data === 'object') {
-    return data as { ok?: boolean; error?: string };
-  }
-  return null;
-}
-
-async function parseInviteHttpError(response: Response): Promise<string> {
-  let msg = `Erro HTTP ${response.status} ao enviar o convite.`;
-  try {
-    const text = await response.text();
-    const trimmed = text.trim();
-    if (trimmed.startsWith('{')) {
-      const body = JSON.parse(trimmed) as {
-        error?: string;
-        msg?: string;
-        message?: string;
-      };
-      msg =
-        body.error?.trim() ||
-        body.msg?.trim() ||
-        body.message?.trim() ||
-        msg;
-    } else if (trimmed) {
-      msg = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
-    }
-  } catch {
-    /* mantém msg */
-  }
-  return msg;
-}
-
-/** URL do convite: em produção usa proxy same-origin (Vercel /api) para evitar bloqueio a *.supabase.co. */
-function getInviteRepresentativeRequestUrl(): string {
-  if (typeof window !== 'undefined' && import.meta.env.PROD) {
-    return `${window.location.origin}/api/invite-representative`;
-  }
-  if (typeof window !== 'undefined' && !import.meta.env.PROD) {
-    const projectUrl = getSupabaseProjectUrl();
-    if (!projectUrl) {
-      throw new Error('Supabase não configurado (URL ausente).');
-    }
-    const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
-    url.searchParams.set('forceFunctionRegion', 'sa-east-1');
-    return url.toString();
-  }
-  const projectUrl = getSupabaseProjectUrl();
-  if (!projectUrl) {
-    throw new Error('Supabase não configurado (URL ausente).');
-  }
-  const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
-  url.searchParams.set('forceFunctionRegion', 'sa-east-1');
-  return url.toString();
-}
-
 /**
- * POST ao proxy /api (produção) ou à Edge Function com apikey + JWT.
+ * Sempre same-origin (/api): o navegador não deve chamar *.supabase.co (CORS / x-region).
  */
+function getInviteRepresentativeRequestUrl(): string {
+  if (typeof window === 'undefined') {
+    throw new Error('Convite por e-mail só pode ser enviado pelo navegador.');
+  }
+  return `${window.location.origin}/api/invite-representative`;
+}
+
+/** POST ao proxy /api (Vercel em produção; Vite proxy em dev). */
 async function invokeInviteRepresentativeFetch(
   accessToken: string,
   body: { representativeId: string; siteUrl: string }
 ): Promise<{ ok?: boolean; error?: string }> {
   const requestUrl = getInviteRepresentativeRequestUrl();
-  const useSameOriginProxy = requestUrl.includes('/api/invite-representative');
-  const anonKey = getSupabaseAnonKey();
-
-  if (!useSameOriginProxy && !anonKey) {
-    throw new Error('Supabase não configurado (chave anônima ausente).');
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${accessToken}`,
-  };
-  if (!useSameOriginProxy && anonKey) {
-    headers.apikey = anonKey;
-  }
 
   let response: Response;
   try {
     response = await fetch(requestUrl, {
       method: 'POST',
-      headers,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
       body: JSON.stringify(body),
     });
   } catch (err) {
@@ -437,25 +370,6 @@ async function invokeInviteRepresentativeFetch(
   }
 
   return payload ?? {};
-}
-
-async function handleFunctionsInvokeError(error: unknown): Promise<never> {
-  if (error instanceof FunctionsFetchError) {
-    const inner =
-      error.context instanceof Error ? error.context.message.trim() : '';
-    throw new Error(networkInviteErrorMessage(inner || 'Failed to fetch'));
-  }
-  if (error instanceof FunctionsRelayError) {
-    throw new Error(
-      'O Supabase não conseguiu executar a função invite-representative. Tente de novo em instantes; se persistir, verifique o painel do projeto (Edge Functions) ou o status da plataforma.'
-    );
-  }
-  if (error instanceof FunctionsHttpError) {
-    throw new Error(await parseInviteHttpError(error.context));
-  }
-  throw error instanceof Error
-    ? error
-    : new Error('Falha ao chamar o envio do convite.');
 }
 
 /**
@@ -487,36 +401,10 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
     throw new Error('Não foi possível determinar a URL do site para o convite.');
   }
 
-  const invokeBody = { representativeId, siteUrl };
-  let payload: { ok?: boolean; error?: string };
-
-  try {
-    payload = await invokeInviteRepresentativeFetch(session.access_token, invokeBody);
-  } catch (directErr) {
-    const directMsg =
-      directErr instanceof Error ? directErr.message : String(directErr);
-    const isNetwork =
-      directMsg.includes('nem chegou ao Supabase') ||
-      directMsg.toLowerCase().includes('failed to fetch');
-
-    if (!isNetwork) {
-      throw directErr;
-    }
-
-    const { data, error } = await supabase.functions.invoke('invite-representative', {
-      body: invokeBody,
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: getSupabaseAnonKey() ?? '',
-      },
-      region: 'sa-east-1' as const,
-    });
-
-    if (error) {
-      await handleFunctionsInvokeError(error);
-    }
-    payload = parseInviteFunctionPayload(data) ?? {};
-  }
+  const payload = await invokeInviteRepresentativeFetch(session.access_token, {
+    representativeId,
+    siteUrl,
+  });
 
   if (payload?.error) {
     throw new Error(payload.error);
