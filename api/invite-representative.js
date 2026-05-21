@@ -59,9 +59,26 @@ export default async function handler(req, res) {
     });
 
     const text = await upstream.text();
+    if (!upstream.ok) {
+      console.error(
+        'invite-representative upstream',
+        upstream.status,
+        text.slice(0, 500),
+      );
+    }
     res.status(upstream.status);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    return res.end(text || '{}');
+    if (text.trim()) {
+      return res.end(text);
+    }
+    return res.end(
+      JSON.stringify({
+        error:
+          upstream.ok
+            ? 'Resposta vazia do Supabase.'
+            : `Erro ${upstream.status} na Edge Function invite-representative.`,
+      }),
+    );
   } catch (err) {
     console.error('invite-representative proxy:', err);
     return res.status(502).json({

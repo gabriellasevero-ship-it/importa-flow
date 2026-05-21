@@ -362,10 +362,14 @@ async function invokeInviteRepresentativeFetch(
   }
 
   if (!response.ok) {
-    const msg =
+    const raw =
       payload?.error?.trim() ||
       (text.trim().startsWith('{') ? undefined : text.trim()) ||
-      `Erro HTTP ${response.status} ao enviar o convite.`;
+      '';
+    const msg =
+      raw && raw.toLowerCase() !== 'internal server error'
+        ? raw
+        : `Erro HTTP ${response.status} ao enviar o convite. Faça redeploy da Edge Function invite-representative no Supabase (o painel mostra logs em Functions → invite-representative).`;
     throw new Error(msg);
   }
 

@@ -19,8 +19,6 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-type AdminClient = ReturnType<typeof createClient>;
-
 function isExistingUserError(message: string): boolean {
   const low = message.toLowerCase();
   return (
@@ -47,118 +45,133 @@ function otpConfigErrorMessage(): string {
   );
 }
 
-type PublicAuthClient = ReturnType<typeof createClient>;
-
-function createPublicAuthClient(supabaseUrl: string, anonKey: string): PublicAuthClient {
-  return createClient(supabaseUrl, anonKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      flowType: "implicit",
-    },
-  });
-}
-
-async function authUserExistsForEmail(
-  admin: AdminClient,
-  email: string,
-): Promise<boolean> {
-  const { data, error } = await admin.auth.admin.getUserByEmail(email);
-  if (error) {
-    const low = (error.message ?? "").toLowerCase();
-    if (low.includes("not found") || low.includes("no user")) {
-      return false;
-    }
-    console.error("getUserByEmail:", error.message);
-    return false;
+/** auth.admin.* do supabase-js não funciona no Deno Edge — usar REST GoTrue. */
+async function readAuthError(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as Record<string, unknown>;
+    const msg = body.msg ?? body.message ?? body.error_description ?? body.error;
+    return String(msg ?? res.statusText);
+  } catch {
+    return res.statusText || "Erro desconhecido";
   }
-  return !!data?.user;
 }
 
-async function sendMagicLinkOtp(
-  publicClient: PublicAuthClient,
+async function inviteUserByEmailRest(
+  supabaseUrl: string,
+  serviceRoleKey: string,
   email: string,
   redirectTo: string,
   data: Record<string, string>,
-  shouldCreateUser: boolean,
 ): Promise<{ error?: string }> {
-  const { error: otpError } = await publicClient.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser,
-      emailRedirectTo: redirectTo,
-      data,
+  const res = await fetch(`${supabaseUrl}/auth/v1/invite`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      email,
+      data,
+      redirect_to: redirectTo,
+    }),
   });
-
-  if (!otpError) {
-    return {};
-  }
-  if (isInvalidCredentialsError(otpError.message)) {
-    return { error: otpConfigErrorMessage() };
-  }
-  if (isExistingUserError(otpError.message) && shouldCreateUser) {
-    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
-  }
-  return { error: otpError.message };
+  if (res.ok) return {};
+  return { error: await readAuthError(res) };
 }
 
-/**
- * Pré-cadastro no backoffice (sem conta Auth): inviteUserByEmail ou magic link com criação de usuário.
- * E-mail já existente no Auth: apenas magic link (shouldCreateUser: false).
- */
-async function sendRepresentativeAccessEmail(
-  admin: AdminClient,
+async function sendMagicLinkOtpRest(
   supabaseUrl: string,
   anonKey: string,
   email: string,
   redirectTo: string,
   data: Record<string, string>,
+  shouldCreateUser: boolean,
 ): Promise<{ error?: string }> {
-  const publicClient = createPublicAuthClient(supabaseUrl, anonKey);
-  const userExists = await authUserExistsForEmail(admin, email);
-
-  if (userExists) {
-    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
+  const res = await fetch(`${supabaseUrl}/auth/v1/otp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      create_user: shouldCreateUser,
+      data,
+      redirect_to: redirectTo,
+    }),
+  });
+  if (res.ok) return {};
+  const err = await readAuthError(res);
+  if (isInvalidCredentialsError(err)) {
+    return { error: otpConfigErrorMessage() };
   }
+  if (isExistingUserError(err) && shouldCreateUser) {
+    return sendMagicLinkOtpRest(
+      supabaseUrl,
+      anonKey,
+      email,
+      redirectTo,
+      data,
+      false,
+    );
+  }
+  return { error: err };
+}
 
-  const { error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
+/**
+ * Pré-cadastro no backoffice: convite (REST) ou magic link; se já existir conta, só magic link.
+ */
+async function sendRepresentativeAccessEmail(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  anonKey: string,
+  email: string,
+  redirectTo: string,
+  data: Record<string, string>,
+): Promise<{ error?: string }> {
+  const invite = await inviteUserByEmailRest(
+    supabaseUrl,
+    serviceRoleKey,
+    email,
     redirectTo,
     data,
-  });
-
-  if (!inviteError) {
-    return {};
-  }
-
-  if (isExistingUserError(inviteError.message)) {
-    return sendMagicLinkOtp(publicClient, email, redirectTo, data, false);
-  }
-
-  console.warn(
-    "inviteUserByEmail falhou, tentando magic link com criação de usuário:",
-    inviteError.message,
   );
+  if (!invite.error) return {};
 
-  const otp = await sendMagicLinkOtp(
-    publicClient,
+  if (isExistingUserError(invite.error)) {
+    return sendMagicLinkOtpRest(
+      supabaseUrl,
+      anonKey,
+      email,
+      redirectTo,
+      data,
+      false,
+    );
+  }
+
+  console.warn("invite REST falhou, tentando magic link:", invite.error);
+
+  const otp = await sendMagicLinkOtpRest(
+    supabaseUrl,
+    anonKey,
     email,
     redirectTo,
     data,
     true,
   );
-  if (!otp.error) {
-    return {};
-  }
+  if (!otp.error) return {};
 
-  if (isInvalidCredentialsError(inviteError.message)) {
+  if (isInvalidCredentialsError(invite.error)) {
     return { error: otp.error };
   }
 
-  return { error: inviteError.message || otp.error };
+  return { error: invite.error || otp.error };
 }
 
 Deno.serve(async (req) => {
+  try {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -274,8 +287,8 @@ Deno.serve(async (req) => {
   };
 
   const send = await sendRepresentativeAccessEmail(
-    admin,
     supabaseUrl,
+    serviceRoleKey,
     anonKey,
     email,
     redirectTo,
@@ -298,4 +311,9 @@ Deno.serve(async (req) => {
   }
 
   return jsonResponse({ ok: true });
+  } catch (err) {
+    console.error("invite-representative:", err);
+    const message = err instanceof Error ? err.message : "Erro interno na função.";
+    return jsonResponse({ error: message }, 500);
+  }
 });
