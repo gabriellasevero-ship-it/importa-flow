@@ -4,6 +4,33 @@ import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { linkRepresentanteByEmailIfUnlinked } from '@/services/representantes';
+
+async function establishSessionFromInviteLink(): Promise<boolean> {
+  const search = window.location.search;
+  const hash = window.location.hash;
+
+  const code = new URLSearchParams(search).get('code');
+  if (code) {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) {
+      console.error('exchangeCodeForSession:', error);
+      return false;
+    }
+    window.history.replaceState({}, '', '/definir-senha');
+    return true;
+  }
+
+  if (hash && (hash.includes('access_token') || hash.includes('type=invite'))) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      window.history.replaceState({}, '', '/definir-senha');
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export const SetPassword: React.FC = () => {
   const [ready, setReady] = useState(false);
@@ -25,9 +52,17 @@ export const SetPassword: React.FC = () => {
     let cancelled = false;
 
     const sync = async () => {
+      await establishSessionFromInviteLink();
       const {
         data: { session },
       } = await supabase.auth.getSession();
+      if (session?.user?.id && session.user.email) {
+        try {
+          await linkRepresentanteByEmailIfUnlinked(session.user.id, session.user.email);
+        } catch (err) {
+          console.warn('Vínculo representante no convite:', err);
+        }
+      }
       if (!cancelled) {
         setHasSession(!!session);
         setReady(true);

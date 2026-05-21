@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "E-mail do representante inválido." }, 400);
   }
 
-  const redirectTo = siteUrl.replace(/\/+$/, "");
+  const redirectTo = `${siteUrl.replace(/\/+$/, "")}/definir-senha`;
   const meta = {
     name: rep.name,
     full_name: rep.name,

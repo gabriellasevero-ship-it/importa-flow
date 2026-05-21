@@ -121,6 +121,24 @@ function AppContent() {
 
   const normalizedPath =
     window.location.pathname.replace(/\/+$/, '') || '/';
+
+  // Convite por e-mail: Supabase redireciona com ?code= na raiz se redirect antigo; leva para criar senha.
+  if (
+    normalizedPath === '/' &&
+    typeof window !== 'undefined' &&
+    (window.location.search.includes('code=') ||
+      window.location.hash.includes('access_token') ||
+      window.location.hash.includes('type=invite'))
+  ) {
+    const tail = `${window.location.search}${window.location.hash}`;
+    window.location.replace(`/definir-senha${tail}`);
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted">
+        <p className="text-muted-foreground">Redirecionando…</p>
+      </div>
+    );
+  }
+
   if (normalizedPath === '/definir-senha') {
     return (
       <>
