@@ -320,8 +320,8 @@ function networkInviteErrorMessage(inner: string): string {
     host ? ` Projeto configurado: ${host}.` : '',
     ' Confirme: função deployada no painel (Edge Functions → invite-representative),',
     ' variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build (Vercel: redeploy após alterar),',
-    ' e desative bloqueadores de anúncio/extensões para este site e para *.supabase.co.',
-    ' No navegador (F12 → Rede), o POST para /functions/v1/invite-representative deve aparecer; se não aparecer, é bloqueio local.',
+    ' Tente de novo após o redeploy (o app usa /api/invite-representative no mesmo domínio).',
+    ' Se persistir, desative bloqueadores de anúncio e confira F12 → Rede no POST para /api/invite-representative.',
   ].join('');
 }
 
@@ -359,31 +359,57 @@ async function parseInviteHttpError(response: Response): Promise<string> {
   return msg;
 }
 
+/** URL do convite: em produção usa proxy same-origin (Vercel /api) para evitar bloqueio a *.supabase.co. */
+function getInviteRepresentativeRequestUrl(): string {
+  if (typeof window !== 'undefined' && import.meta.env.PROD) {
+    return `${window.location.origin}/api/invite-representative`;
+  }
+  if (typeof window !== 'undefined' && !import.meta.env.PROD) {
+    const projectUrl = getSupabaseProjectUrl();
+    if (!projectUrl) {
+      throw new Error('Supabase não configurado (URL ausente).');
+    }
+    const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
+    url.searchParams.set('forceFunctionRegion', 'sa-east-1');
+    return url.toString();
+  }
+  const projectUrl = getSupabaseProjectUrl();
+  if (!projectUrl) {
+    throw new Error('Supabase não configurado (URL ausente).');
+  }
+  const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
+  url.searchParams.set('forceFunctionRegion', 'sa-east-1');
+  return url.toString();
+}
+
 /**
- * Fetch direto à Edge Function (região sa-east-1 do projeto) com apikey + JWT explícitos.
+ * POST ao proxy /api (produção) ou à Edge Function com apikey + JWT.
  */
 async function invokeInviteRepresentativeFetch(
   accessToken: string,
   body: { representativeId: string; siteUrl: string }
 ): Promise<{ ok?: boolean; error?: string }> {
-  const projectUrl = getSupabaseProjectUrl();
+  const requestUrl = getInviteRepresentativeRequestUrl();
+  const useSameOriginProxy = requestUrl.includes('/api/invite-representative');
   const anonKey = getSupabaseAnonKey();
-  if (!projectUrl || !anonKey) {
-    throw new Error('Supabase não configurado (URL ou chave anônima ausente).');
+
+  if (!useSameOriginProxy && !anonKey) {
+    throw new Error('Supabase não configurado (chave anônima ausente).');
   }
 
-  const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
-  url.searchParams.set('forceFunctionRegion', 'sa-east-1');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+  };
+  if (!useSameOriginProxy && anonKey) {
+    headers.apikey = anonKey;
+  }
 
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    response = await fetch(requestUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: anonKey,
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (err) {
