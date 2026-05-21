@@ -1,7 +1,13 @@
 import * as pdfjsLib from 'pdfjs-dist';
 // Worker para processamento em background (evita travar a UI)
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { findOrderedUniqueSkuMatches, type CatalogParseLineMeta } from '@/lib/catalogParser';
+import {
+  findOrderedUniqueSkuMatches,
+  isCatalogContentPage,
+  type CatalogParseLineMeta,
+} from '@/lib/catalogParser';
+
+export { isCatalogContentPage } from '@/lib/catalogParser';
 
 if (typeof pdfjsWorker === 'string') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -146,6 +152,8 @@ export function buildPageTextLineMetaList(
     let acc = '';
     let maxH = 0;
     let anyBold = false;
+    let sumY = 0;
+    let yCount = 0;
     for (let i = 0; i < line.length; i++) {
       const cur = line[i];
       const prev = line[i - 1];
@@ -154,11 +162,18 @@ export function buildPageTextLineMetaList(
       acc += cur.str;
       maxH = Math.max(maxH, cur.fontHeight);
       if (cur.isBold) anyBold = true;
+      sumY += cur.y;
+      yCount += 1;
       if (cur.hasEOL) acc += '\n';
     }
     const text = acc.trimEnd();
     if (text.length > 0) {
-      metas.push({ text, fontHeight: maxH || 1, isBold: anyBold });
+      metas.push({
+        text,
+        fontHeight: maxH || 1,
+        isBold: anyBold,
+        y: yCount > 0 ? sumY / yCount : 0,
+      });
     }
   }
   return metas;
@@ -514,6 +529,57 @@ function pageTextLooksInsufficient(text: string): boolean {
   return false;
 }
 
+const DEFAULT_IMAGE_COLUMN_RIGHT_FRAC = 0.42;
+const IMAGE_CROP_MARGIN_PX = 6;
+
+/**
+ * Recorte da coluna esquerda (foto do produto) dentro da faixa vertical do SKU.
+ */
+export function computeSkuImageCropFracs(
+  viewport: ViewportLike,
+  items: readonly unknown[],
+  band: SkuVerticalBand,
+  pageWidthPx: number,
+  pageHeightPx: number
+): PageContentBoundsFracs {
+  const W = Math.max(1, pageWidthPx);
+  const H = Math.max(1, pageHeightPx);
+  const yTopPx = band.topFrac * H;
+  const yBotPx = band.bottomFrac * H;
+  let minX = Infinity;
+  let any = false;
+
+  for (const item of items) {
+    if (!isPdfTextItem(item)) continue;
+    const s = item.str;
+    if (!s || !s.trim()) continue;
+    const t = item.transform;
+    const m = pdfjsLib.Util.transform(viewport.transform, t);
+    const y0 = m[5];
+    const fs = Math.hypot(m[0], m[1]) || 1;
+    const textW =
+      typeof item.width === 'number' && item.width > 0 ? item.width : Math.max(s.length * 0.5, 0.5);
+    const x0 = m[4];
+    const ascent = fs * 0.85;
+    const yTop = y0 - ascent;
+    const yBot = y0 + fs * 0.35;
+    if (yBot < yTopPx || yTop > yBotPx) continue;
+    any = true;
+    minX = Math.min(minX, x0, x0 + textW * m[0]);
+  }
+
+  const rightFrac = any
+    ? Math.max(0.2, Math.min(0.55, (minX - IMAGE_CROP_MARGIN_PX) / W))
+    : DEFAULT_IMAGE_COLUMN_RIGHT_FRAC;
+
+  return {
+    leftFrac: 0,
+    rightFrac,
+    topFrac: Math.max(0, Math.min(1, band.topFrac)),
+    bottomFrac: Math.max(0, Math.min(1, band.bottomFrac)),
+  };
+}
+
 async function maybeEnrichTextWithOcr(
   canvas: HTMLCanvasElement,
   nativeText: string,
@@ -624,6 +690,10 @@ export async function extractTextAndPageImages(
   pageLineMetas: CatalogParseLineMeta[][];
   /** Caixa de união do texto (nativo) em frações da página; null se sem texto posicionado. */
   pageTextBoundsFracs: (PageContentBoundsFracs | null)[];
+  /** Recorte da foto do produto (coluna esquerda) por SKU, alinhado a pageSkuVerticalBands. */
+  pageSkuImageCropFracs: PageContentBoundsFracs[][];
+  /** Índices 0-based das páginas do PDF ignoradas (capa ou sem produtos). */
+  skippedPageIndices: number[];
 }> {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -633,6 +703,8 @@ export async function extractTextAndPageImages(
   const pageSkuVerticalBands: SkuVerticalBand[][] = [];
   const pageLineMetas: CatalogParseLineMeta[][] = [];
   const pageTextBoundsFracs: (PageContentBoundsFracs | null)[] = [];
+  const pageSkuImageCropFracs: PageContentBoundsFracs[][] = [];
+  const skippedPageIndices: number[] = [];
   let ocrPageCount = 0;
   let ocrStartNotified = false;
   const notifyOcrStartingOnce = () => {
@@ -647,37 +719,75 @@ export async function extractTextAndPageImages(
     let pageText = buildPageTextFromPdfItems(textContent.items);
 
     const viewport = page.getViewport({ scale: PAGE_IMAGE_SCALE });
-    pageLineMetas.push(buildPageTextLineMetaList(viewport, textContent.items));
-    pageTextBoundsFracs.push(
-      computePageTextUnionBoundsFracs(viewport, textContent.items, viewport.width, viewport.height)
+    const lineMeta = buildPageTextLineMetaList(viewport, textContent.items);
+    const textBounds = computePageTextUnionBoundsFracs(
+      viewport,
+      textContent.items,
+      viewport.width,
+      viewport.height
     );
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
+    let bands: SkuVerticalBand[] = [];
+    let imageCrops: PageContentBoundsFracs[] = [];
     if (ctx) {
       await page.render({
         canvasContext: ctx,
         viewport,
         intent: 'display',
       }).promise;
-      pageSkuVerticalBands.push(
-        computePageSkuVerticalBands(viewport, textContent.items, canvas.height)
+      bands = computePageSkuVerticalBands(viewport, textContent.items, canvas.height);
+      imageCrops = bands.map((band) =>
+        computeSkuImageCropFracs(
+          viewport,
+          textContent.items,
+          band,
+          viewport.width,
+          viewport.height
+        )
       );
       const { text, ranOcr } = await maybeEnrichTextWithOcr(canvas, pageText, notifyOcrStartingOnce);
       pageText = text;
       if (ranOcr) ocrPageCount += 1;
+
+      const pdfPageIndex = i - 1;
+      if (!isCatalogContentPage(pageText, pdfPageIndex)) {
+        skippedPageIndices.push(pdfPageIndex);
+        options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+        continue;
+      }
+
       const blob = await new Promise<Blob | null>((resolve) => {
         canvas.toBlob(resolve, 'image/jpeg', PAGE_IMAGE_JPEG_QUALITY);
       });
       if (blob) pageBlobs.push(blob);
     } else {
-      pageSkuVerticalBands.push([]);
+      const pdfPageIndex = i - 1;
+      if (!isCatalogContentPage(pageText, pdfPageIndex)) {
+        skippedPageIndices.push(pdfPageIndex);
+        options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+        continue;
+      }
     }
 
     pageTexts.push(pageText);
+    pageLineMetas.push(lineMeta);
+    pageTextBoundsFracs.push(textBounds);
+    pageSkuVerticalBands.push(bands);
+    pageSkuImageCropFracs.push(imageCrops);
     options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
   }
 
-  return { pageTexts, pageBlobs, ocrPageCount, pageSkuVerticalBands, pageLineMetas, pageTextBoundsFracs };
+  return {
+    pageTexts,
+    pageBlobs,
+    ocrPageCount,
+    pageSkuVerticalBands,
+    pageLineMetas,
+    pageTextBoundsFracs,
+    pageSkuImageCropFracs,
+    skippedPageIndices,
+  };
 }

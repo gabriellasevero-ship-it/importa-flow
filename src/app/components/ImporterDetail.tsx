@@ -487,6 +487,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         pageSkuVerticalBands,
         pageLineMetas,
         pageTextBoundsFracs,
+        pageSkuImageCropFracs,
+        skippedPageIndices,
       } = await extractTextAndPageImages(uploadedFile, {
         onOcrStarting: () => {
           toast.info('Usando OCR no catálogo', {
@@ -506,6 +508,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           categoryNames,
         });
         pageItems.forEach((item) => itemsWithPage.push({ ...item, pageIndex: i }));
+      }
+      if (skippedPageIndices.length > 0) {
+        toast.info(
+          `${skippedPageIndices.length} página(s) ignorada(s) (capa ou sem produtos).`
+        );
       }
       if (itemsWithPage.length === 0) {
         toast.warning('Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.');
@@ -543,13 +550,23 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       for (const [pIdx, list] of itemsByPage) {
         const bounds = pageTextBoundsFracs[pIdx];
         const bands = pageSkuVerticalBands[pIdx] ?? [];
+        const imageCrops = pageSkuImageCropFracs[pIdx] ?? [];
         if (list.length === 1) {
-          if (bounds) {
+          const bandIdx = bands.findIndex((b) => b.sku === list[0].code);
+          const imageCrop = bandIdx >= 0 ? imageCrops[bandIdx] : undefined;
+          if (imageCrop) {
+            cropByItem.set(list[0], {
+              top: imageCrop.topFrac,
+              bottom: imageCrop.bottomFrac,
+              left: imageCrop.leftFrac,
+              right: imageCrop.rightFrac,
+            });
+          } else if (bounds) {
             cropByItem.set(list[0], {
               top: bounds.topFrac,
               bottom: bounds.bottomFrac,
-              left: bounds.leftFrac,
-              right: bounds.rightFrac,
+              left: 0,
+              right: bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
             });
           }
           continue;
@@ -558,19 +575,31 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           ? equalVerticalCropFracsInBand(list.length, bounds.topFrac, bounds.bottomFrac)
           : equalVerticalCropFracs(list.length);
         list.forEach((item, slot) => {
-          const bySku = bands.find((b) => b.sku === item.code);
-          const horiz = bounds ? { left: bounds.leftFrac, right: bounds.rightFrac } : {};
+          const bandIdx = bands.findIndex((b) => b.sku === item.code);
+          const imageCrop = bandIdx >= 0 ? imageCrops[bandIdx] : undefined;
+          if (imageCrop) {
+            cropByItem.set(item, {
+              top: imageCrop.topFrac,
+              bottom: imageCrop.bottomFrac,
+              left: imageCrop.leftFrac,
+              right: imageCrop.rightFrac,
+            });
+            return;
+          }
+          const bySku = bandIdx >= 0 ? bands[bandIdx] : undefined;
           if (bySku) {
             cropByItem.set(item, {
               top: bySku.topFrac,
               bottom: bySku.bottomFrac,
-              ...horiz,
+              left: 0,
+              right: bounds && bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
             });
           } else if (equalInPage[slot]) {
             cropByItem.set(item, {
               top: equalInPage[slot].topFrac,
               bottom: equalInPage[slot].bottomFrac,
-              ...horiz,
+              left: 0,
+              right: bounds && bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
             });
           }
         });

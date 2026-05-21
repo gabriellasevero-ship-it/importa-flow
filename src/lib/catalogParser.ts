@@ -18,7 +18,11 @@ export type CatalogParseLineMeta = {
   text: string;
   fontHeight: number;
   isBold: boolean;
+  /** Posição Y média da linha no viewport (coordenada PDF). */
+  y: number;
 };
+
+export type CatalogTextLayout = 'titleBeforeCode' | 'codeBeforeTitle';
 
 export const DEFAULT_CATEGORY = 'Catálogo';
 const DEFAULT_MIN_ORDER = 1;
@@ -47,6 +51,45 @@ const MATERIAL_KEYWORDS = [
 ];
 
 const QUANTIDADE_CAIXA_REGEX = /Quantidade\s*\/\s*Caixa\s*:?\s*(\d+)/i;
+
+const COVER_PROMO_REGEX = /novidades|desconto|ver[aã]o\s*\d{4}|toda\s+a\s+tabela|akash\s*imports/i;
+
+function pageTextLooksInsufficient(text: string): boolean {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length < 60) return true;
+  const hasPrice = /R\$\s*[\d.,]+/i.test(t);
+  const hasSku = /\b[A-Za-z]{2,}\s*[-_]\s*[A-Za-z0-9]{2,}\b/.test(t);
+  if (!hasPrice && !hasSku && t.length < 280) return true;
+  return false;
+}
+
+/**
+ * Página com conteúdo de produtos (não capa). Índice 0 do PDF é sempre ignorado.
+ */
+export function isCatalogContentPage(pageText: string, pdfPageIndex: number): boolean {
+  if (pdfPageIndex === 0) return false;
+
+  const t = pageText.replace(/\s+/g, ' ').trim();
+  if (pageTextLooksInsufficient(pageText)) return false;
+
+  const skus = findOrderedUniqueSkuMatches(pageText);
+  const hasPrice = /R\$\s*[\d.,]+/i.test(t);
+  const hasSku = skus.length > 0;
+  const hasProductBlock = /quantidade\s*\/\s*caixa/i.test(t);
+
+  if (!hasSku && !hasPrice) return false;
+
+  if (
+    COVER_PROMO_REGEX.test(t) &&
+    skus.length < 2 &&
+    !hasProductBlock &&
+    t.length < 400
+  ) {
+    return false;
+  }
+
+  return hasSku || (hasPrice && hasProductBlock);
+}
 
 /**
  * Normaliza string de preço para número.
@@ -258,7 +301,7 @@ export function inferCategoryFromCatalog(
   return DEFAULT_CATEGORY;
 }
 
-function isMetaCatalogLine(line: string): boolean {
+export function isMetaCatalogLine(line: string): boolean {
   const t = line.trim();
   if (t.length < 2) return true;
   if (/^(quantidade|dim\s|atualizado em|www\.|https?:)/i.test(t)) return true;
@@ -267,7 +310,73 @@ function isMetaCatalogLine(line: string): boolean {
   if (/quantidade\s*\/\s*caixa/i.test(t)) return true;
   if (/^DIM\s*:/i.test(t)) return true;
   if (/^promo(c?|ç)/i.test(t)) return true;
+  if (/^estoque\s*:/i.test(t)) return true;
   return false;
+}
+
+function isSkuOnlyLine(line: string, sku: string): boolean {
+  if (!sku) return false;
+  const [prefix, ...restParts] = sku.split('-');
+  const suffix = restParts.join('-');
+  const skuOnly = new RegExp(
+    `^${prefix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*[-_]\\s*${suffix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*$`,
+    'i'
+  );
+  return skuOnly.test(line.trim());
+}
+
+function isPriceOnlyLine(line: string): boolean {
+  const t = line.trim();
+  return /^R\$\s*[\d.,]+/i.test(t) && !/[A-Za-zÀ-ÿ]{4,}/.test(t.replace(/R\$\s*[\d.,]+/gi, ''));
+}
+
+/** Detecta layout Toy King (título antes do código) vs Akash (código antes do título). */
+export function detectCatalogTextLayout(
+  chunk: string,
+  sku: string,
+  lineMeta?: CatalogParseLineMeta[]
+): CatalogTextLayout {
+  const junk = /^(mercado|amazon|shopee|www\.|http|com\s+[\d.]+)|toy\s*king/i;
+  if (!lineMeta?.length || !sku) return 'codeBeforeTitle';
+
+  const rows = lineMeta
+    .filter((row) => {
+      const t = row.text.replace(/\r/g, '').trim();
+      if (!t || junk.test(t) || isMetaCatalogLine(t)) return false;
+      return lineOverlapsChunk(t, chunk);
+    })
+    .sort((a, b) => b.y - a.y);
+
+  if (rows.length === 0) return 'codeBeforeTitle';
+
+  const skuIdx = rows.findIndex((r) => isSkuOnlyLine(r.text, sku) || r.text.includes(sku));
+  if (skuIdx < 0) return 'codeBeforeTitle';
+
+  const substantiveBeforeSku = rows.slice(0, skuIdx).filter((r) => {
+    const t = r.text.trim();
+    return !isPriceOnlyLine(t) && !isSkuOnlyLine(t, sku);
+  });
+
+  if (substantiveBeforeSku.length > 0) return 'titleBeforeCode';
+
+  if (skuIdx <= 1) return 'codeBeforeTitle';
+  return 'titleBeforeCode';
+}
+
+function chunkLineMeta(
+  chunk: string,
+  sku: string,
+  lineMeta?: CatalogParseLineMeta[]
+): CatalogParseLineMeta[] {
+  const junk = /^(mercado|amazon|shopee|www\.|http|com\s+[\d.]+)|toy\s*king/i;
+  if (!lineMeta?.length) return [];
+  return lineMeta
+    .filter((row) => {
+      const t = row.text.replace(/\r/g, '').trim();
+      if (!t || junk.test(t) || isMetaCatalogLine(t)) return false;
+      return lineOverlapsChunk(t, chunk);
+    })
+    .sort((a, b) => b.y - a.y);
 }
 
 function lineOverlapsChunk(lineText: string, chunk: string): boolean {
@@ -292,40 +401,66 @@ function pickTitleAndDescription(
   cleanedMultiline: string,
   lineMeta?: CatalogParseLineMeta[]
 ): { name: string; description: string } {
-  const junk = /^(mercado|amazon|shopee|www\.|http|com\s+[\d.]+)|toy\s*king/i;
+  const rows = chunkLineMeta(chunk, sku, lineMeta);
+  if (rows.length > 0 && sku) {
+    const layout = detectCatalogTextLayout(chunk, sku, lineMeta);
+    let titleRow: CatalogParseLineMeta | undefined;
 
-  if (lineMeta?.length && sku) {
-    const [prefix, ...restParts] = sku.split('-');
-    const suffix = restParts.join('-');
-    const skuOnly = new RegExp(
-      `^${prefix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*[-_]\\s*${suffix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*$`,
-      'i'
-    );
-    const rows = lineMeta.filter((row) => {
-      const t = row.text.replace(/\r/g, '').trim();
-      if (!t || junk.test(t) || isMetaCatalogLine(t)) return false;
-      if (skuOnly.test(t)) return false;
-      return lineOverlapsChunk(t, chunk);
-    });
-    if (rows.length > 0) {
-      const sorted = [...rows].sort(
-        (a, b) =>
-          b.fontHeight - a.fontHeight ||
-          Number(b.isBold) - Number(a.isBold) ||
-          b.text.length - a.text.length
+    if (layout === 'titleBeforeCode') {
+      const skuIdx = rows.findIndex(
+        (r) => isSkuOnlyLine(r.text, sku) || r.text.replace(/\s+/g, ' ').includes(sku)
       );
-      const best = sorted[0];
-      const name = best.text.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_LENGTH);
-      const otherTexts: string[] = [];
-      for (const r of sorted.slice(1)) {
-        const tx = r.text.replace(/\s+/g, ' ').trim();
-        if (tx && tx !== name) otherTexts.push(tx);
+      const beforeSku = skuIdx > 0 ? rows.slice(0, skuIdx) : rows;
+      const candidates = beforeSku.filter(
+        (r) => !isPriceOnlyLine(r.text) && !isSkuOnlyLine(r.text, sku)
+      );
+      titleRow =
+        candidates[0] ??
+        [...beforeSku].sort(
+          (a, b) =>
+            b.fontHeight - a.fontHeight ||
+            Number(b.isBold) - Number(a.isBold) ||
+            b.text.length - a.text.length
+        )[0];
+    } else {
+      const skuIdx = rows.findIndex(
+        (r) => isSkuOnlyLine(r.text, sku) || r.text.replace(/\s+/g, ' ').includes(sku)
+      );
+      const afterSku = skuIdx >= 0 ? rows.slice(skuIdx + 1) : rows;
+      const priceIdx = afterSku.findIndex((r) => /R\$\s*[\d.,]+/i.test(r.text));
+      const afterPrice = priceIdx >= 0 ? afterSku.slice(priceIdx + 1) : afterSku;
+      titleRow = afterPrice.find((r) => r.isBold && !isPriceOnlyLine(r.text));
+      if (!titleRow) {
+        const candidates = afterPrice.filter(
+          (r) => !isPriceOnlyLine(r.text) && !isSkuOnlyLine(r.text, sku)
+        );
+        titleRow =
+          candidates[0] ??
+          [...afterPrice].sort(
+            (a, b) =>
+              Number(b.isBold) - Number(a.isBold) ||
+              b.fontHeight - a.fontHeight ||
+              b.text.length - a.text.length
+          )[0];
       }
-      const description = otherTexts.join('\n').slice(0, MAX_DESCRIPTION_LENGTH);
-      return { name: name || 'Produto importado', description };
     }
+
+    const name = (titleRow?.text ?? 'Produto importado')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_NAME_LENGTH);
+    const otherTexts: string[] = [];
+    for (const r of rows) {
+      const tx = r.text.replace(/\s+/g, ' ').trim();
+      if (!tx || tx === name) continue;
+      if (isSkuOnlyLine(tx, sku) || isPriceOnlyLine(tx)) continue;
+      otherTexts.push(tx);
+    }
+    const description = otherTexts.join('\n').slice(0, MAX_DESCRIPTION_LENGTH);
+    return { name: name || 'Produto importado', description };
   }
 
+  const junk = /^(mercado|amazon|shopee|www\.|http|com\s+[\d.]+)|toy\s*king/i;
   const lines = cleanedMultiline
     .split(/\n/)
     .map((l) => l.trim())
@@ -363,7 +498,7 @@ function parseProductChunkWithKnownSku(
   let nameSource = stripSkuFromText(afterMat, sku);
   nameSource = removePricesFromText(nameSource);
   nameSource = nameSource.replace(QUANTIDADE_CAIXA_REGEX, ' ');
-  nameSource = nameSource.replace(/De\s+pl[aá]stico\s*\|\s*Na\s+caixa/gi, ' ');
+  nameSource = nameSource.replace(/^\s*estoque\s*:[^\n]*/gim, ' ');
   const cleanedMultiline = nameSource.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 
   const { name, description } = pickTitleAndDescription(
