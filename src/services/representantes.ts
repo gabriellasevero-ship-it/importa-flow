@@ -5,6 +5,8 @@ import {
 } from '@supabase/supabase-js';
 import {
   getConfiguredSupabaseHost,
+  getSupabaseAnonKey,
+  getSupabaseProjectUrl,
   isSupabaseConfigured,
   supabase,
   syncAuthBeforeDbRead,
@@ -310,6 +312,126 @@ export async function deleteRepresentative(id: string): Promise<void> {
   if (error) throwIfMutationDeniedByRls(error);
 }
 
+function networkInviteErrorMessage(inner: string): string {
+  const host = getConfiguredSupabaseHost();
+  return [
+    'Não foi possível conectar à Edge Function invite-representative (o pedido nem chegou ao Supabase).',
+    inner ? ` Motivo técnico: ${inner}.` : '',
+    host ? ` Projeto configurado: ${host}.` : '',
+    ' Confirme: função deployada no painel (Edge Functions → invite-representative),',
+    ' variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build (Vercel: redeploy após alterar),',
+    ' e desative bloqueadores de anúncio/extensões para este site e para *.supabase.co.',
+    ' No navegador (F12 → Rede), o POST para /functions/v1/invite-representative deve aparecer; se não aparecer, é bloqueio local.',
+  ].join('');
+}
+
+function parseInviteFunctionPayload(
+  data: unknown
+): { ok?: boolean; error?: string } | null {
+  if (data && typeof data === 'object') {
+    return data as { ok?: boolean; error?: string };
+  }
+  return null;
+}
+
+async function parseInviteHttpError(response: Response): Promise<string> {
+  let msg = `Erro HTTP ${response.status} ao enviar o convite.`;
+  try {
+    const text = await response.text();
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{')) {
+      const body = JSON.parse(trimmed) as {
+        error?: string;
+        msg?: string;
+        message?: string;
+      };
+      msg =
+        body.error?.trim() ||
+        body.msg?.trim() ||
+        body.message?.trim() ||
+        msg;
+    } else if (trimmed) {
+      msg = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
+    }
+  } catch {
+    /* mantém msg */
+  }
+  return msg;
+}
+
+/**
+ * Fetch direto à Edge Function (região sa-east-1 do projeto) com apikey + JWT explícitos.
+ */
+async function invokeInviteRepresentativeFetch(
+  accessToken: string,
+  body: { representativeId: string; siteUrl: string }
+): Promise<{ ok?: boolean; error?: string }> {
+  const projectUrl = getSupabaseProjectUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!projectUrl || !anonKey) {
+    throw new Error('Supabase não configurado (URL ou chave anônima ausente).');
+  }
+
+  const url = new URL(`${projectUrl}/functions/v1/invite-representative`);
+  url.searchParams.set('forceFunctionRegion', 'sa-east-1');
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const inner =
+      err instanceof Error ? err.message.trim() : 'Failed to fetch';
+    throw new Error(networkInviteErrorMessage(inner));
+  }
+
+  const text = await response.text();
+  let payload: { ok?: boolean; error?: string } | null = null;
+  if (text.trim().startsWith('{')) {
+    try {
+      payload = JSON.parse(text) as { ok?: boolean; error?: string };
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    const msg =
+      payload?.error?.trim() ||
+      (text.trim().startsWith('{') ? undefined : text.trim()) ||
+      `Erro HTTP ${response.status} ao enviar o convite.`;
+    throw new Error(msg);
+  }
+
+  return payload ?? {};
+}
+
+async function handleFunctionsInvokeError(error: unknown): Promise<never> {
+  if (error instanceof FunctionsFetchError) {
+    const inner =
+      error.context instanceof Error ? error.context.message.trim() : '';
+    throw new Error(networkInviteErrorMessage(inner || 'Failed to fetch'));
+  }
+  if (error instanceof FunctionsRelayError) {
+    throw new Error(
+      'O Supabase não conseguiu executar a função invite-representative. Tente de novo em instantes; se persistir, verifique o painel do projeto (Edge Functions) ou o status da plataforma.'
+    );
+  }
+  if (error instanceof FunctionsHttpError) {
+    throw new Error(await parseInviteHttpError(error.context));
+  }
+  throw error instanceof Error
+    ? error
+    : new Error('Falha ao chamar o envio do convite.');
+}
+
 /**
  * Envia convite por e-mail (Edge Function): magic link para entrar sem senha obrigatória.
  * Requer função `invite-representative` deployada e template de Magic Link no painel Auth.
@@ -320,11 +442,14 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
   }
   await requireAuthenticatedSessionForMutation();
   await syncAuthBeforeDbRead();
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-  if (sessionError || !session?.access_token) {
+
+  const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError) {
+    console.warn('refreshSession antes do convite:', refreshError.message);
+  }
+
+  const session = refreshData.session ?? (await supabase.auth.getSession()).data.session;
+  if (!session?.access_token) {
     throw new Error(
       'Não foi possível obter a sessão para enviar o convite. Faça login novamente e tente de novo.'
     );
@@ -336,60 +461,37 @@ export async function sendRepresentativeInvite(representativeId: string): Promis
     throw new Error('Não foi possível determinar a URL do site para o convite.');
   }
 
-  const { data, error } = await supabase.functions.invoke('invite-representative', {
-    body: { representativeId, siteUrl },
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-    },
-  });
+  const invokeBody = { representativeId, siteUrl };
+  let payload: { ok?: boolean; error?: string };
 
-  if (error) {
-    if (error instanceof FunctionsFetchError) {
-      const inner =
-        error.context instanceof Error ? error.context.message.trim() : '';
-      const host = getConfiguredSupabaseHost();
-      throw new Error(
-        [
-          'Não foi possível conectar à Edge Function invite-representative (o pedido nem chegou ao Supabase).',
-          inner ? ` Motivo técnico: ${inner}.` : '',
-          host ? ` Projeto configurado: ${host}.` : '',
-          ' Confirme: deploy da função (Dashboard → Edge Functions ou `supabase functions deploy invite-representative`),',
-          ' variáveis VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY corretas, e que rede ou extensões não bloqueiem o domínio do projeto.',
-        ].join('')
-      );
+  try {
+    payload = await invokeInviteRepresentativeFetch(session.access_token, invokeBody);
+  } catch (directErr) {
+    const directMsg =
+      directErr instanceof Error ? directErr.message : String(directErr);
+    const isNetwork =
+      directMsg.includes('nem chegou ao Supabase') ||
+      directMsg.toLowerCase().includes('failed to fetch');
+
+    if (!isNetwork) {
+      throw directErr;
     }
-    if (error instanceof FunctionsRelayError) {
-      throw new Error(
-        'O Supabase não conseguiu executar a função invite-representative. Tente de novo em instantes; se persistir, verifique o painel do projeto (Edge Functions) ou o status da plataforma.'
-      );
+
+    const { data, error } = await supabase.functions.invoke('invite-representative', {
+      body: invokeBody,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: getSupabaseAnonKey() ?? '',
+      },
+      region: 'sa-east-1' as const,
+    });
+
+    if (error) {
+      await handleFunctionsInvokeError(error);
     }
-    let msg = error.message || 'Falha ao chamar o envio do convite.';
-    if (error instanceof FunctionsHttpError) {
-      try {
-        const text = await error.context.text();
-        const trimmed = text.trim();
-        if (trimmed.startsWith('{')) {
-          const body = JSON.parse(trimmed) as {
-            error?: string;
-            msg?: string;
-            message?: string;
-          };
-          msg =
-            body.error?.trim() ||
-            body.msg?.trim() ||
-            body.message?.trim() ||
-            msg;
-        } else if (trimmed) {
-          msg = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
-        }
-      } catch {
-        /* mantém msg */
-      }
-    }
-    throw new Error(msg);
+    payload = parseInviteFunctionPayload(data) ?? {};
   }
 
-  const payload = data as { ok?: boolean; error?: string } | null;
   if (payload?.error) {
     throw new Error(payload.error);
   }

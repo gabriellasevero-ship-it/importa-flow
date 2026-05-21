@@ -62,6 +62,22 @@ export function isSupabaseConfigured(): boolean {
   return !!(supabaseUrl && supabaseAnonKey);
 }
 
+/** Origem do projeto (sem barra final), para chamadas REST e Edge Functions. */
+export function getSupabaseProjectUrl(): string | null {
+  const raw = supabaseUrl?.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function getSupabaseAnonKey(): string | null {
+  return supabaseAnonKey?.trim() || null;
+}
+
 /** Garante que a sessão em memória/storage foi lida antes do 1º SELECT (evita JWT ausente no 1º request). */
 export async function syncAuthBeforeDbRead(): Promise<void> {
   if (!isSupabaseConfigured()) return;
