@@ -4,37 +4,19 @@ import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  establishSessionFromAuthLink,
+  hasPendingAuthLinkParams,
+} from '@/lib/authRecoveryLink';
 import { linkRepresentanteByEmailIfUnlinked } from '@/services/representantes';
-
-async function establishSessionFromInviteLink(): Promise<boolean> {
-  const search = window.location.search;
-  const hash = window.location.hash;
-
-  const code = new URLSearchParams(search).get('code');
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
-      console.error('exchangeCodeForSession:', error);
-      return false;
-    }
-    window.history.replaceState({}, '', '/definir-senha');
-    return true;
-  }
-
-  if (hash && (hash.includes('access_token') || hash.includes('type=invite'))) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      window.history.replaceState({}, '', '/definir-senha');
-      return true;
-    }
-  }
-
-  return false;
-}
 
 export const SetPassword: React.FC = () => {
   const [ready, setReady] = useState(false);
   const [hasSession, setHasSession] = useState(false);
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const [confirmingLink, setConfirmingLink] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkHint, setLinkHint] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -52,10 +34,21 @@ export const SetPassword: React.FC = () => {
     let cancelled = false;
 
     const sync = async () => {
-      await establishSessionFromInviteLink();
+      const pendingLink = hasPendingAuthLinkParams();
+
+      if (pendingLink) {
+        if (!cancelled) {
+          setNeedsConfirmation(true);
+          setHasSession(false);
+          setReady(true);
+        }
+        return;
+      }
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (session?.user?.id && session.user.email) {
         try {
           await linkRepresentanteByEmailIfUnlinked(session.user.id, session.user.email);
@@ -63,8 +56,10 @@ export const SetPassword: React.FC = () => {
           console.warn('Vínculo representante no convite:', err);
         }
       }
+
       if (!cancelled) {
         setHasSession(!!session);
+        setNeedsConfirmation(false);
         setReady(true);
       }
     };
@@ -73,9 +68,12 @@ export const SetPassword: React.FC = () => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!cancelled) {
-        setHasSession(!!session);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!cancelled && session && (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN')) {
+        setHasSession(true);
+        setNeedsConfirmation(false);
+        setLinkError(null);
+        setLinkHint(null);
         setReady(true);
       }
     });
@@ -85,6 +83,40 @@ export const SetPassword: React.FC = () => {
       subscription.unsubscribe();
     };
   }, []);
+
+  const handleConfirmLink = async () => {
+    setConfirmingLink(true);
+    setLinkError(null);
+    setLinkHint(null);
+
+    const linkResult = await establishSessionFromAuthLink();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (session?.user?.id && session.user.email) {
+      try {
+        await linkRepresentanteByEmailIfUnlinked(session.user.id, session.user.email);
+      } catch (err) {
+        console.warn('Vínculo representante no convite:', err);
+      }
+    }
+
+    if (session && linkResult.ok) {
+      setHasSession(true);
+      setNeedsConfirmation(false);
+    } else {
+      setHasSession(false);
+      if (!linkResult.ok) {
+        setLinkError(linkResult.message);
+        setLinkHint(linkResult.hint ?? null);
+      } else {
+        setLinkError('Não foi possível validar o link.');
+        setLinkHint('Solicite um novo e-mail de recuperação.');
+      }
+    }
+    setConfirmingLink(false);
+  };
 
   const handleSubmit = async () => {
     setErrorMessage(null);
@@ -129,7 +161,49 @@ export const SetPassword: React.FC = () => {
   if (!ready) {
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center p-4">
-        <p className="text-muted-foreground">Validando o link…</p>
+        <p className="text-muted-foreground">Carregando…</p>
+      </div>
+    );
+  }
+
+  if (needsConfirmation) {
+    return (
+      <div className="min-h-screen bg-muted flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <Card>
+            <CardHeader>
+              <CardTitle>Confirmar redefinição de senha</CardTitle>
+              <CardDescription>
+                Por segurança, clique no botão abaixo para ativar o link do e-mail. Isso evita que
+                filtros de e-mail (Outlook, Gmail corporativo) consumam o link antes de você.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {linkError && (
+                <>
+                  <p className="text-sm text-destructive">{linkError}</p>
+                  {linkHint && <p className="text-sm text-muted-foreground">{linkHint}</p>}
+                </>
+              )}
+              <Button
+                className="w-full"
+                onClick={() => void handleConfirmLink()}
+                disabled={confirmingLink}
+              >
+                {confirmingLink ? 'Validando…' : 'Continuar para definir nova senha'}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  window.location.replace('/');
+                }}
+              >
+                Voltar ao login
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -142,10 +216,17 @@ export const SetPassword: React.FC = () => {
             <Package className="w-8 h-8 text-primary-foreground" />
           </div>
           <h1 className="text-xl font-semibold text-foreground">Link inválido ou expirado</h1>
-          <p className="text-muted-foreground text-sm">
-            Abra o convite enviado por e-mail e use o botão para criar sua senha. Se o problema
-            continuar, solicite um novo convite ao administrador.
-          </p>
+          <p className="text-muted-foreground text-sm">{linkError ?? 'Este link não pode mais ser usado.'}</p>
+          {linkHint && <p className="text-muted-foreground text-sm">{linkHint}</p>}
+          <Button
+            variant="outline"
+            className="mt-2"
+            onClick={() => {
+              window.location.replace('/');
+            }}
+          >
+            Voltar ao login e pedir novo e-mail
+          </Button>
         </div>
       </div>
     );

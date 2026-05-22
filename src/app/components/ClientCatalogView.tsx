@@ -20,6 +20,12 @@ import { useOrders } from '@/contexts/OrdersContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
 import { buildWhatsAppUrl } from '@/lib/whatsapp';
 import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
 import { formatCnpjInput, onlyDigits } from '@/lib/cnpj';
@@ -221,7 +227,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   };
 
   const getTotal = () => {
-    return cart.reduce((total, item) => total + (item.product.price * item.quantity), 0);
+    return cart.reduce((total, item) => total + getCartLineTotal(item), 0);
   };
 
   // Constante para pedido mínimo
@@ -238,7 +244,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
       };
     }
     acc[importadoraId].items.push(item);
-    acc[importadoraId].total += item.product.price * item.quantity;
+    acc[importadoraId].total += getCartLineTotal(item);
     return acc;
   }, {} as Record<string, { importadoraName: string; items: CartItem[]; total: number }>);
 
@@ -268,7 +274,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     // Criar e salvar pedido para cada importadora
     const newOrders: Order[] = Object.entries(groupedByImportadora).map(([importadoraId, items]) => {
       const importadora = importadorasList.find(imp => imp.id === importadoraId);
-      const total = items.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+      const total = items.reduce((sum, item) => sum + getCartLineTotal(item), 0);
 
       return {
         id: `PED${Date.now()}-${Math.random().toString(36).substring(7)}`,
@@ -705,11 +711,18 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                     <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-sm">
                       {product.code}
                     </p>
-                    <div className="inline-block max-w-full">
-                      <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
-                        R$ {product.price.toFixed(2)}
-                        <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
+                    <div className="space-y-0.5">
+                      <div className="inline-block max-w-full">
+                        <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
+                          R$ {formatPriceBRL(getUnitPrice(product))}
+                          <span className="ml-0.5 text-[10px] font-semibold opacity-90 sm:text-xs">/un</span>
+                          <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
+                        </div>
                       </div>
+                      <p className="text-[10px] text-muted-foreground sm:text-xs">
+                        <span className="font-medium text-foreground">Caixa:</span> R${' '}
+                        {formatPriceBRL(getBoxPrice(product))}
+                      </p>
                     </div>
                     <h4 className="line-clamp-2 text-xs font-medium sm:min-h-[3rem] sm:text-base">
                       {product.name}
@@ -899,8 +912,12 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                                     </Button>
                                     <span className="text-xs text-muted-foreground ml-0.5">cx</span>
                                   </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                                    {formatPriceBRL(getBoxPrice(item.product))}/cx
+                                  </p>
                                   <p className="text-sm font-bold text-center text-primary w-full">
-                                    R$ {(item.product.price * item.quantity).toFixed(2)}
+                                    {item.quantity} cx — R$ {formatPriceBRL(getCartLineTotal(item))}
                                   </p>
                                 </div>
                               </div>
@@ -1436,11 +1453,15 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                               <p className="text-xs text-muted-foreground">Código: {item.product.code}</p>
                             </div>
                             <div className="text-right">
+                              <p className="text-xs text-muted-foreground">
+                                R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                                {formatPriceBRL(getBoxPrice(item.product))}/cx
+                              </p>
                               <p className="text-sm text-muted-foreground">
-                                {item.quantity}x R$ {item.product.price.toFixed(2)}
+                                {item.quantity} cx
                               </p>
                               <p className="font-bold text-primary">
-                                R$ {(item.quantity * item.product.price).toFixed(2)}
+                                R$ {formatPriceBRL(getCartLineTotal(item))}
                               </p>
                             </div>
                           </div>

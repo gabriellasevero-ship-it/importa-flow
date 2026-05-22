@@ -52,8 +52,12 @@ export const supabase = createClient(
       storage: getSafeStorage(),
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
-      flowType: 'pkce',
+      // Desligado em /definir-senha: validação só após clique (evita prefetch de e-mail consumir ?code=).
+      detectSessionInUrl: typeof window !== 'undefined' &&
+        !window.location.pathname.replace(/\/+$/, '').endsWith('/definir-senha'),
+      // Implícito: link de recuperação funciona ao abrir o e-mail em qualquer navegador.
+      // (PKCE exige o mesmo navegador em que "Esqueci minha senha" foi clicado.)
+      flowType: 'implicit',
     },
   }
 );

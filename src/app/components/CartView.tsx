@@ -7,6 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/app/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { useCart } from '@/contexts/CartContext';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
 import { useClientes } from '@/hooks/useData';
 import { toast } from 'sonner';
 
@@ -149,9 +155,15 @@ export const CartView: React.FC<CartViewProps> = ({ onNavigate }) => {
                         <Plus className="w-3 h-3" />
                       </Button>
                     </div>
-                    <p className="font-medium" style={{ color: '#1B5B6B' }}>
-                      R$ {(item.product.price * item.quantity).toFixed(2)}
-                    </p>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">
+                        R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                        {formatPriceBRL(getBoxPrice(item.product))}/cx
+                      </p>
+                      <p className="font-medium" style={{ color: '#1B5B6B' }}>
+                        {item.quantity} cx — R$ {formatPriceBRL(getCartLineTotal(item))}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>

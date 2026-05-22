@@ -128,7 +128,8 @@ function AppContent() {
     typeof window !== 'undefined' &&
     (window.location.search.includes('code=') ||
       window.location.hash.includes('access_token') ||
-      window.location.hash.includes('type=invite'))
+      window.location.hash.includes('type=invite') ||
+      window.location.hash.includes('type=recovery'))
   ) {
     const tail = `${window.location.search}${window.location.hash}`;
     window.location.replace(`/definir-senha${tail}`);

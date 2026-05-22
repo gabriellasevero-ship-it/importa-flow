@@ -1139,11 +1139,15 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                           </p>
                         </div>
 
-                        <div className="col-span-2 flex items-center justify-between gap-2 sm:col-span-1 sm:flex-col sm:items-end sm:justify-center">
-                          <span className="text-xs text-muted-foreground sm:hidden">Preço</span>
-                          <div className="text-xl font-bold text-primary sm:text-2xl">
+                        <div className="col-span-2 flex flex-col items-end justify-center gap-0.5 sm:col-span-1">
+                          <span className="text-xs text-muted-foreground sm:hidden">Preços</span>
+                          <div className="text-lg font-bold text-primary sm:text-xl">
                             R$ {product.price.toFixed(2)}
+                            <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
                           </div>
+                          <p className="text-xs text-muted-foreground">
+                            Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
+                          </p>
                         </div>
                       </div>
                     </div>

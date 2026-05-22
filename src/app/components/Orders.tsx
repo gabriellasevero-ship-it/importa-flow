@@ -10,6 +10,12 @@ import { useTransportadoras } from '@/hooks/useData';
 import { toast } from 'sonner';
 import { Order, OrderStatus } from '@/types';
 import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -156,22 +162,24 @@ export const Orders: React.FC = () => {
     csvContent += `\n`;
     
     // Cabeçalho da tabela de produtos
-    csvContent += `Referência,Foto,NCM,Cod. Barra,Descrição,Cxs,Vlr/Uni,Vlr Total,ST,IPI%,IPI\n`;
+    csvContent += `Referência,Foto,NCM,Cod. Barra,Descrição,Cxs,Vlr/Uni,Vlr/Cx,Vlr Total,ST,IPI%,IPI\n`;
     
     // Produtos
     let totalCaixas = 0;
     let totalIPI = 0;
     
     order.items.forEach((item) => {
-      const vlrUnitario = item.product.price.toFixed(2);
-      const vlrTotal = (item.quantity * item.product.price).toFixed(2);
+      const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));
+      const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));
+      const lineTotal = getCartLineTotal(item);
+      const vlrTotal = formatPriceBRL(lineTotal);
       const ipiPercentual = '6,50';
-      const ipiValor = (item.quantity * item.product.price * 0.065).toFixed(2);
+      const ipiValor = formatPriceBRL(lineTotal * 0.065);
       
       totalCaixas += item.quantity;
       totalIPI += parseFloat(ipiValor);
       
-      csvContent += `${item.product.code},,,,${item.product.name},${item.quantity},${vlrUnitario},${vlrTotal},0.00,${ipiPercentual},${ipiValor}\n`;
+      csvContent += `${item.product.code},,,,${item.product.name},${item.quantity},${vlrUnitario},${vlrCaixa},${vlrTotal},0.00,${ipiPercentual},${ipiValor}\n`;
     });
     
     csvContent += `\n`;
@@ -220,7 +228,7 @@ export const Orders: React.FC = () => {
     
     order.items.forEach((item) => {
       totalCaixas += item.quantity;
-      totalIPI += (item.quantity * item.product.price * 0.065);
+      totalIPI += getCartLineTotal(item) * 0.065;
     });
 
     const transportadora = order.transportadoraId ? transportadoras.find(t => t.id === order.transportadoraId) : null;
@@ -359,6 +367,7 @@ export const Orders: React.FC = () => {
               <th>Descrição</th>
               <th style="text-align: center;">Cxs</th>
               <th style="text-align: right;">Vlr/Uni</th>
+              <th style="text-align: right;">Vlr/Cx</th>
               <th style="text-align: right;">Vlr Total</th>
               <th style="text-align: center;">IPI %</th>
               <th style="text-align: right;">IPI</th>
@@ -366,15 +375,18 @@ export const Orders: React.FC = () => {
           </thead>
           <tbody>
             ${order.items.map(item => {
-              const vlrUnitario = item.product.price.toFixed(2);
-              const vlrTotal = (item.quantity * item.product.price).toFixed(2);
-              const ipiValor = (item.quantity * item.product.price * 0.065).toFixed(2);
+              const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));
+              const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));
+              const lineTotal = getCartLineTotal(item);
+              const vlrTotal = formatPriceBRL(lineTotal);
+              const ipiValor = formatPriceBRL(lineTotal * 0.065);
               return `
                 <tr>
                   <td>${item.product.code}</td>
                   <td>${item.product.name}</td>
                   <td style="text-align: center;">${item.quantity}</td>
                   <td style="text-align: right;">R$ ${vlrUnitario}</td>
+                  <td style="text-align: right;">R$ ${vlrCaixa}</td>
                   <td style="text-align: right;">R$ ${vlrTotal}</td>
                   <td style="text-align: center;">6,50%</td>
                   <td style="text-align: right;">R$ ${ipiValor}</td>
@@ -961,11 +973,15 @@ export const Orders: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
-                        <p className="text-sm text-muted-foreground">
-                          {item.quantity}x R$ {item.product.price.toFixed(2)}
-                        </p>
+                        <div className="text-sm text-muted-foreground">
+                          <p>
+                            R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                            {formatPriceBRL(getBoxPrice(item.product))}/cx
+                          </p>
+                          <p>{item.quantity} cx</p>
+                        </div>
                         <p className="text-lg font-bold text-primary sm:text-base">
-                          R$ {(item.quantity * item.product.price).toFixed(2)}
+                          R$ {formatPriceBRL(getCartLineTotal(item))}
                         </p>
                       </div>
                     </div>

@@ -464,8 +464,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         'Recuperação de senha só está disponível quando o Supabase estiver configurado.'
       );
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
+    const origin = window.location.origin.replace(/\/+$/, '');
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${origin}/definir-senha`,
     });
     if (error) throw error;
   };

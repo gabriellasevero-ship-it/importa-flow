@@ -21,6 +21,12 @@ import { useClientes, useImportadoras, useCommissions, useTransportadoras } from
 import { createCliente } from '@/services/clientes';
 import { toast } from 'sonner';
 import { Cliente, Order, OrderStatus } from '@/types';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
 
 type ViewMode = 'list' | 'client-detail' | 'order-detail';
 
@@ -266,22 +272,24 @@ export const Clients: React.FC = () => {
     csvContent += `\n`;
     
     // Cabeçalho da tabela de produtos
-    csvContent += `Referência,Foto,NCM,Cod. Barra,Descrição,Cxs,Vlr/Uni,Vlr Total,ST,IPI%,IPI\n`;
+    csvContent += `Referência,Foto,NCM,Cod. Barra,Descrição,Cxs,Vlr/Uni,Vlr/Cx,Vlr Total,ST,IPI%,IPI\n`;
     
     // Produtos
     let totalCaixas = 0;
     let totalIPI = 0;
     
     order.items.forEach((item) => {
-      const vlrUnitario = item.product.price.toFixed(2);
-      const vlrTotal = (item.quantity * item.product.price).toFixed(2);
+      const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));
+      const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));
+      const lineTotal = getCartLineTotal(item);
+      const vlrTotal = formatPriceBRL(lineTotal);
       const ipiPercentual = '6,50';
-      const ipiValor = (item.quantity * item.product.price * 0.065).toFixed(2);
+      const ipiValor = formatPriceBRL(lineTotal * 0.065);
       
       totalCaixas += item.quantity;
       totalIPI += parseFloat(ipiValor);
       
-      csvContent += `${item.product.code},,,,${item.product.name},${item.quantity},${vlrUnitario},${vlrTotal},0.00,${ipiPercentual},${ipiValor}\n`;
+      csvContent += `${item.product.code},,,,${item.product.name},${item.quantity},${vlrUnitario},${vlrCaixa},${vlrTotal},0.00,${ipiPercentual},${ipiValor}\n`;
     });
     
     csvContent += `\n`;
@@ -328,12 +336,12 @@ export const Clients: React.FC = () => {
     
     order.items.forEach((item) => {
       totalCaixas += item.quantity;
-      totalIPI += (item.quantity * item.product.price * 0.065);
+      totalIPI += getCartLineTotal(item) * 0.065;
     });
 
     const transportadora = order.transportadoraId ? transportadoras.find(t => t.id === order.transportadoraId) : null;
 
-    const htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pedido ${order.id}</title><style>@page{margin:20mm;}body{font-family:Arial,sans-serif;font-size:11px;color:#000;}.header{text-align:center;margin-bottom:20px;border-bottom:2px solid #5B3DF5;padding-bottom:10px;}.header h1{color:#5B3DF5;margin:0;font-size:20px;}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;padding:15px;background:#f5f5f5;border-radius:5px;}.info-item{margin-bottom:8px;}.info-label{font-weight:bold;color:#555;}table{width:100%;border-collapse:collapse;margin-bottom:20px;}th{background:#5B3DF5;color:white;padding:10px 8px;text-align:left;font-size:10px;}td{border:1px solid #ddd;padding:8px;font-size:10px;}tr:nth-child(even){background:#f9f9f9;}.totals{margin-top:20px;padding:15px;background:#f5f5f5;border-radius:5px;}.total-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px;}.total-row.main{font-size:16px;font-weight:bold;color:#5B3DF5;padding-top:10px;border-top:2px solid #5B3DF5;}.footer{margin-top:30px;padding-top:15px;border-top:1px solid #ddd;font-size:10px;color:#666;}</style></head><body><div class="header"><h1>${order.importadoraName}</h1><p>Pedido Nº ${order.id} | Data: ${dataFormatada} ${horaFormatada}</p></div><div class="info-grid"><div><div class="info-item"><span class="info-label">Cliente:</span> ${selectedClient?.name || order.clienteName || 'Não informado'}</div><div class="info-item"><span class="info-label">Representante:</span> ${order.representanteName}</div><div class="info-item"><span class="info-label">Data de Criação:</span> ${order.createdAt.toLocaleDateString('pt-BR')}</div><div class="info-item"><span class="info-label">Status:</span> ${order.status === 'faturado' ? 'Faturado' : order.status === 'aberto' ? 'Em Aberto' : 'Cancelado'}</div></div><div><div class="info-item"><span class="info-label">Prazo de Pagamento:</span> ${order.paymentTerm || 'Não informado'}</div><div class="info-item"><span class="info-label">Transportadora:</span> ${transportadora?.name || 'Não informada'}</div>${transportadora ? `<div class="info-item"><span class="info-label">Telefone Transportadora:</span> ${transportadora.phone}</div><div class="info-item"><span class="info-label">Local:</span> ${transportadora.city} - ${transportadora.state}</div>` : ''}</div></div><table><thead><tr><th>Código</th><th>Descrição</th><th style="text-align:center;">Cxs</th><th style="text-align:right;">Vlr/Uni</th><th style="text-align:right;">Vlr Total</th><th style="text-align:center;">IPI %</th><th style="text-align:right;">IPI</th></tr></thead><tbody>${order.items.map(item => {const vlrUnitario = item.product.price.toFixed(2);const vlrTotal = (item.quantity * item.product.price).toFixed(2);const ipiValor = (item.quantity * item.product.price * 0.065).toFixed(2);return `<tr><td>${item.product.code}</td><td>${item.product.name}</td><td style="text-align:center;">${item.quantity}</td><td style="text-align:right;">R$ ${vlrUnitario}</td><td style="text-align:right;">R$ ${vlrTotal}</td><td style="text-align:center;">6,50%</td><td style="text-align:right;">R$ ${ipiValor}</td></tr>`;}).join('')}</tbody></table><div class="totals"><div class="total-row"><span>Total de Caixas:</span><span>${totalCaixas}</span></div><div class="total-row"><span>Subtotal:</span><span>R$ ${order.total.toFixed(2)}</span></div><div class="total-row"><span>Total IPI:</span><span>R$ ${totalIPI.toFixed(2)}</span></div><div class="total-row main"><span>TOTAL DO PEDIDO:</span><span>R$ ${order.total.toFixed(2)}</span></div></div>${order.notes ? `<div class="footer"><div class="info-label">Observações:</div><p>${order.notes}</p></div>` : ''}<div class="footer" style="margin-top:40px;text-align:center;"><p>Documento gerado em ${dataFormatada} às ${horaFormatada}</p></div></body></html>`;
+    const htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pedido ${order.id}</title><style>@page{margin:20mm;}body{font-family:Arial,sans-serif;font-size:11px;color:#000;}.header{text-align:center;margin-bottom:20px;border-bottom:2px solid #5B3DF5;padding-bottom:10px;}.header h1{color:#5B3DF5;margin:0;font-size:20px;}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;padding:15px;background:#f5f5f5;border-radius:5px;}.info-item{margin-bottom:8px;}.info-label{font-weight:bold;color:#555;}table{width:100%;border-collapse:collapse;margin-bottom:20px;}th{background:#5B3DF5;color:white;padding:10px 8px;text-align:left;font-size:10px;}td{border:1px solid #ddd;padding:8px;font-size:10px;}tr:nth-child(even){background:#f9f9f9;}.totals{margin-top:20px;padding:15px;background:#f5f5f5;border-radius:5px;}.total-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px;}.total-row.main{font-size:16px;font-weight:bold;color:#5B3DF5;padding-top:10px;border-top:2px solid #5B3DF5;}.footer{margin-top:30px;padding-top:15px;border-top:1px solid #ddd;font-size:10px;color:#666;}</style></head><body><div class="header"><h1>${order.importadoraName}</h1><p>Pedido Nº ${order.id} | Data: ${dataFormatada} ${horaFormatada}</p></div><div class="info-grid"><div><div class="info-item"><span class="info-label">Cliente:</span> ${selectedClient?.name || order.clienteName || 'Não informado'}</div><div class="info-item"><span class="info-label">Representante:</span> ${order.representanteName}</div><div class="info-item"><span class="info-label">Data de Criação:</span> ${order.createdAt.toLocaleDateString('pt-BR')}</div><div class="info-item"><span class="info-label">Status:</span> ${order.status === 'faturado' ? 'Faturado' : order.status === 'aberto' ? 'Em Aberto' : 'Cancelado'}</div></div><div><div class="info-item"><span class="info-label">Prazo de Pagamento:</span> ${order.paymentTerm || 'Não informado'}</div><div class="info-item"><span class="info-label">Transportadora:</span> ${transportadora?.name || 'Não informada'}</div>${transportadora ? `<div class="info-item"><span class="info-label">Telefone Transportadora:</span> ${transportadora.phone}</div><div class="info-item"><span class="info-label">Local:</span> ${transportadora.city} - ${transportadora.state}</div>` : ''}</div></div><table><thead><tr><th>Código</th><th>Descrição</th><th style="text-align:center;">Cxs</th><th style="text-align:right;">Vlr/Uni</th><th style="text-align:right;">Vlr/Cx</th><th style="text-align:right;">Vlr Total</th><th style="text-align:center;">IPI %</th><th style="text-align:right;">IPI</th></tr></thead><tbody>${order.items.map(item => {const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));const lineTotal = getCartLineTotal(item);const vlrTotal = formatPriceBRL(lineTotal);const ipiValor = formatPriceBRL(lineTotal * 0.065);return `<tr><td>${item.product.code}</td><td>${item.product.name}</td><td style="text-align:center;">${item.quantity}</td><td style="text-align:right;">R$ ${vlrUnitario}</td><td style="text-align:right;">R$ ${vlrCaixa}</td><td style="text-align:right;">R$ ${vlrTotal}</td><td style="text-align:center;">6,50%</td><td style="text-align:right;">R$ ${ipiValor}</td></tr>`;}).join('')}</tbody></table><div class="totals"><div class="total-row"><span>Total de Caixas:</span><span>${totalCaixas}</span></div><div class="total-row"><span>Subtotal:</span><span>R$ ${order.total.toFixed(2)}</span></div><div class="total-row"><span>Total IPI:</span><span>R$ ${totalIPI.toFixed(2)}</span></div><div class="total-row main"><span>TOTAL DO PEDIDO:</span><span>R$ ${order.total.toFixed(2)}</span></div></div>${order.notes ? `<div class="footer"><div class="info-label">Observações:</div><p>${order.notes}</p></div>` : ''}<div class="footer" style="margin-top:40px;text-align:center;"><p>Documento gerado em ${dataFormatada} às ${horaFormatada}</p></div></body></html>`;
 
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const link = document.createElement('a');
@@ -1141,11 +1149,15 @@ export const Clients: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
-                        <p className="text-sm text-muted-foreground">
-                          {item.quantity}x R$ {item.product.price.toFixed(2)}
-                        </p>
+                        <div className="text-sm text-muted-foreground">
+                          <p>
+                            R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                            {formatPriceBRL(getBoxPrice(item.product))}/cx
+                          </p>
+                          <p>{item.quantity} cx</p>
+                        </div>
                         <p className="font-bold text-primary">
-                          R$ {(item.quantity * item.product.price).toFixed(2)}
+                          R$ {formatPriceBRL(getCartLineTotal(item))}
                         </p>
                       </div>
                     </div>

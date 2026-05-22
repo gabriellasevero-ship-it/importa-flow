@@ -19,6 +19,12 @@ import { resolveRepresentativeForCatalogShare } from '@/services/representantes'
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
 import { toast } from 'sonner';
 
 interface CatalogProps {
@@ -74,7 +80,7 @@ export const Catalog: React.FC<CatalogProps> = ({
       };
     }
     acc[importadoraId].items.push(item);
-    acc[importadoraId].total += item.product.price * item.quantity;
+    acc[importadoraId].total += getCartLineTotal(item);
     return acc;
   }, {} as Record<string, { importadoraName: string; items: typeof items; total: number }>);
 
@@ -519,11 +525,18 @@ export const Catalog: React.FC<CatalogProps> = ({
                 <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-sm">{product.code}</p>
                 
                 {/* Price Badge */}
-                <div className="inline-block max-w-full">
-                  <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
-                    R$ {product.price.toFixed(2)}
-                    <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
+                <div className="space-y-0.5">
+                  <div className="inline-block max-w-full">
+                    <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
+                      R$ {formatPriceBRL(getUnitPrice(product))}
+                      <span className="ml-0.5 text-[10px] font-semibold opacity-90 sm:text-xs">/un</span>
+                      <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
+                    </div>
                   </div>
+                  <p className="text-[10px] text-muted-foreground sm:text-xs">
+                    <span className="font-medium text-foreground">Caixa:</span> R${' '}
+                    {formatPriceBRL(getBoxPrice(product))}
+                  </p>
                 </div>
 
                 {/* Product Name */}
@@ -712,8 +725,12 @@ export const Catalog: React.FC<CatalogProps> = ({
                                     </Button>
                                     <span className="text-xs text-muted-foreground ml-0.5">cx</span>
                                   </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                                    {formatPriceBRL(getBoxPrice(item.product))}/cx
+                                  </p>
                                   <p className="text-sm font-bold text-center text-primary w-full">
-                                    R$ {(item.product.price * item.quantity).toFixed(2)}
+                                    {item.quantity} cx — R$ {formatPriceBRL(getCartLineTotal(item))}
                                   </p>
                                 </div>
                               </div>
@@ -973,22 +990,41 @@ export const Catalog: React.FC<CatalogProps> = ({
                         })}
                       </tr>
 
-                      {/* Price Row */}
+                      {/* Unit Price Row */}
                       <tr className="border-b bg-muted/30">
+                        <td className="p-3 font-medium">Preço Unitário</td>
+                        {compareProducts.map(productId => {
+                          const product = products.find(p => p.id === productId);
+                          return (
+                            <td key={productId} className="p-3">
+                              <span className="font-bold">
+                                R$ {product ? formatPriceBRL(getUnitPrice(product)) : '0.00'}
+                              </span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+
+                      {/* Box Price Row */}
+                      <tr className="border-b">
                         <td className="p-3 font-medium">Preço Caixa</td>
                         {compareProducts.map(productId => {
                           const product = products.find(p => p.id === productId);
-                          const allPrices = compareProducts.map(id => products.find(p => p.id === id)?.price || 0);
-                          const minPrice = Math.min(...allPrices);
-                          const isLowestPrice = product?.price === minPrice;
+                          const allBoxPrices = compareProducts.map((id) => {
+                            const p = products.find((item) => item.id === id);
+                            return p ? getBoxPrice(p) : 0;
+                          });
+                          const minPrice = Math.min(...allBoxPrices);
+                          const boxPrice = product ? getBoxPrice(product) : 0;
+                          const isLowestPrice = boxPrice === minPrice;
                           
                           return (
                             <td key={productId} className="p-3">
                               <div className="flex items-center gap-2">
                                 <span className={`font-bold ${isLowestPrice ? 'text-secondary' : ''}`}>
-                                  R$ {product?.price.toFixed(2)}
+                                  R$ {formatPriceBRL(boxPrice)}
                                 </span>
-                                {isLowestPrice && allPrices.length > 1 && (
+                                {isLowestPrice && allBoxPrices.length > 1 && (
                                   <Badge className="bg-secondary text-white">Menor preço</Badge>
                                 )}
                               </div>

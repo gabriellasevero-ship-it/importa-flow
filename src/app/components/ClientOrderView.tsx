@@ -6,6 +6,12 @@ import { Textarea } from '@/app/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { CartItem } from '@/types';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
 import { toast } from 'sonner';
 
 interface ClientOrderViewProps {
@@ -51,7 +57,7 @@ export const ClientOrderView: React.FC<ClientOrderViewProps> = ({ linkId }) => {
   };
 
   const getTotal = () => {
-    return items.reduce((total, item) => total + (item.product.price * item.quantity), 0);
+    return items.reduce((total, item) => total + getCartLineTotal(item), 0);
   };
 
   const handleSubmitOrder = () => {
@@ -169,10 +175,12 @@ export const ClientOrderView: React.FC<ClientOrderViewProps> = ({ linkId }) => {
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">
-                          R$ {item.product.price.toFixed(2)} x {item.quantity}
+                          R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                          {formatPriceBRL(getBoxPrice(item.product))}/cx
                         </p>
+                        <p className="text-xs text-muted-foreground">{item.quantity} cx</p>
                         <p className="font-medium" style={{ color: '#1B5B6B' }}>
-                          R$ {(item.product.price * item.quantity).toFixed(2)}
+                          R$ {formatPriceBRL(getCartLineTotal(item))}
                         </p>
                       </div>
                     </div>

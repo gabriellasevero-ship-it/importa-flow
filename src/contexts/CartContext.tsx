@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { CartItem, Product } from '@/types';
+import { getCartLineTotal } from '@/lib/productPricing';
 
 interface CartContextType {
   items: CartItem[];
@@ -63,7 +64,7 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
   };
 
   const getTotal = () => {
-    return items.reduce((total, item) => total + (item.product.price * item.quantity), 0);
+    return items.reduce((total, item) => total + getCartLineTotal(item), 0);
   };
 
   const getItemCount = () => {

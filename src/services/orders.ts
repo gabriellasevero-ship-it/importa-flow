@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { mapOrder, mapOrderItem, toDbOrder } from './mappers';
 import type { Order, CartItem } from '@/types';
+import { getCartLineTotal } from '@/lib/productPricing';
 
 type CreateOrderCatalogoResult = { order_id: string; total: number };
 
@@ -105,10 +106,7 @@ export async function getOrder(id: string, representanteId?: string): Promise<Or
 export async function createOrder(
   order: Partial<Order> & { representanteId: string; importadoraId: string; items: CartItem[] }
 ): Promise<Order> {
-  const total = order.items.reduce(
-    (sum, i) => sum + i.product.price * i.quantity,
-    0
-  );
+  const total = order.items.reduce((sum, i) => sum + getCartLineTotal(i), 0);
   const { data: inserted, error: orderError } = await supabase
     .from('orders')
     .insert({

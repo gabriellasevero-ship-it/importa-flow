@@ -173,3 +173,28 @@ Ao tentar login em produção, anote a **mensagem em vermelho** que aparece:
 - **"Confirme seu e-mail"** → Ative o usuário no Supabase (Authentication → Users) ou desative "Confirm email" no provider.
 
 Com isso é possível identificar se o problema é ambiente (variáveis/URL), Auth ou falta de perfil.
+
+---
+
+## 6. Link de recuperação de senha ("inválido ou expirado" / `?code=` já expirado)
+
+### Causa comum
+
+Links com `?code=` no e-mail (template padrão do Supabase) costumam **queimar antes de você abrir**: o Outlook/Gmail corporativo (Safe Links) acessa o link automaticamente. O código de uso único expira e aparece "link inválido".
+
+### Configuração obrigatória
+
+1. **Authentication** → **URL Configuration**
+   - **Site URL:** `https://www.importaflow.com.br` (ou seu domínio)
+   - **Redirect URLs:** `https://www.importaflow.com.br/definir-senha` e `http://localhost:5173/definir-senha`
+2. **Authentication** → **Email Templates** → **Reset password**  
+   Cole o HTML de `supabase/email_templates/recovery_password.html` (usa `#token_hash=`, não só `{{ .ConfirmationURL }}`).
+3. Faça **deploy** do app (a tela `/definir-senha` pede "Continuar" antes de validar o link).
+4. Peça um **novo** e-mail em "Esqueci minha senha" (links antigos com `?code=` não voltam a funcionar).
+
+### Fluxo esperado
+
+- E-mail novo → URL tipo `https://www.importaflow.com.br/definir-senha#token_hash=...&type=recovery`
+- Na tela, clique em **Continuar para definir nova senha** → formulário de senha.
+
+Documentação Supabase sobre prefetch: [Email Templates](https://supabase.com/docs/guides/auth/auth-email-templates).

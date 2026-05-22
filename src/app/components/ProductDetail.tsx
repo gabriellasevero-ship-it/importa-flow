@@ -8,6 +8,7 @@ import { Badge } from '@/app/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/app/components/ui/dialog';
 import { Product } from '@/types';
 import { useCart } from '@/contexts/CartContext';
+import { formatPriceBRL, getBoxPrice, getCartLineTotal, getUnitPrice } from '@/lib/productPricing';
 import { toast } from 'sonner';
 
 interface ProductDetailProps {
@@ -116,11 +117,17 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
             {/* Pricing */}
             <Card>
               <CardContent className="p-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Preço por Unidade</p>
+                    <p className="text-2xl font-medium" style={{ color: '#1B5B6B' }}>
+                      R$ {formatPriceBRL(getUnitPrice(product))}
+                    </p>
+                  </div>
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">Preço por Caixa</p>
                     <p className="text-2xl font-medium" style={{ color: '#1B5B6B' }}>
-                      R$ {product.price.toFixed(2)}
+                      R$ {formatPriceBRL(getBoxPrice(product))}
                     </p>
                   </div>
                   <div>
@@ -159,7 +166,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
                   <div className="ml-auto text-right">
                     <p className="text-sm text-muted-foreground">Subtotal</p>
                     <p className="text-xl font-medium" style={{ color: '#1B5B6B' }}>
-                      R$ {(product.price * quantity).toFixed(2)}
+                      R$ {formatPriceBRL(getCartLineTotal({ product, quantity }))}
                     </p>
                   </div>
                 </div>
