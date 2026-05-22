@@ -102,9 +102,13 @@ export const SetPassword: React.FC = () => {
       }
     }
 
-    if (session && linkResult.ok) {
+    if (session) {
       setHasSession(true);
       setNeedsConfirmation(false);
+      if (!linkResult.ok) {
+        setLinkError(null);
+        setLinkHint(null);
+      }
     } else {
       setHasSession(false);
       if (!linkResult.ok) {

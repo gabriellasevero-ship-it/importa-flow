@@ -1,3 +1,4 @@
+import type { EmailOtpType } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
 export type AuthLinkResult =
@@ -8,7 +9,8 @@ export type PendingAuthLinkParams = {
   tokenHash: string | null;
   otpType: string | null;
   code: string | null;
-  hasHashTokens: boolean;
+  hasHashAccessTokens: boolean;
+  hasRecoveryHashWithoutTokens: boolean;
 };
 
 function cleanAuthParamsFromUrl(): void {
@@ -16,32 +18,52 @@ function cleanAuthParamsFromUrl(): void {
   window.history.replaceState({}, '', path);
 }
 
+function getHashParams(): URLSearchParams {
+  return new URLSearchParams(window.location.hash.replace(/^#/, ''));
+}
+
 /** Lê parâmetros de auth na query e no hash (#). */
 export function readPendingAuthLinkParams(): PendingAuthLinkParams {
   const search = new URLSearchParams(window.location.search);
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const hash = getHashParams();
 
   const tokenHash = search.get('token_hash') ?? hash.get('token_hash');
   const otpType = search.get('type') ?? hash.get('type');
   const code = search.get('code') ?? hash.get('code');
 
-  const hasHashTokens =
-    !!window.location.hash &&
-    (window.location.hash.includes('access_token') ||
-      window.location.hash.includes('type=recovery') ||
-      window.location.hash.includes('type=invite'));
+  const accessToken = hash.get('access_token');
+  const refreshToken = hash.get('refresh_token');
+  const hasHashAccessTokens = !!(accessToken && refreshToken);
 
-  return { tokenHash, otpType, code, hasHashTokens };
+  const hasRecoveryHashWithoutTokens =
+    !!window.location.hash &&
+    !hasHashAccessTokens &&
+    !tokenHash &&
+    !code &&
+    (hash.get('type') === 'recovery' || hash.get('type') === 'invite');
+
+  return {
+    tokenHash,
+    otpType,
+    code,
+    hasHashAccessTokens,
+    hasRecoveryHashWithoutTokens,
+  };
 }
 
 export function hasPendingAuthLinkParams(): boolean {
   const p = readPendingAuthLinkParams();
-  return !!(p.tokenHash && p.otpType === 'recovery') || !!p.code || p.hasHashTokens;
+  return (
+    !!(p.tokenHash && (p.otpType === 'recovery' || p.otpType === 'invite')) ||
+    !!p.code ||
+    p.hasHashAccessTokens ||
+    p.hasRecoveryHashWithoutTokens
+  );
 }
 
 function readUrlAuthError(): string | null {
   const search = new URLSearchParams(window.location.search);
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const hash = getHashParams();
   const error =
     search.get('error_description') ??
     search.get('error') ??
@@ -50,49 +72,34 @@ function readUrlAuthError(): string | null {
   return error ? decodeURIComponent(error.replace(/\+/g, ' ')) : null;
 }
 
-async function waitForAuthSession(maxMs = 8000): Promise<boolean> {
-  const deadline = Date.now() + maxMs;
+async function setSessionFromHashTokens(): Promise<AuthLinkResult> {
+  const hash = getHashParams();
+  const access_token = hash.get('access_token');
+  const refresh_token = hash.get('refresh_token');
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      subscription.unsubscribe();
-      resolve(value);
+  if (!access_token || !refresh_token) {
+    return {
+      ok: false,
+      message: 'Link incompleto ou já utilizado.',
+      hint: 'Solicite um novo e-mail em "Esqueci minha senha" e abra o link assim que chegar.',
     };
+  }
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (
-        session &&
-        (event === 'PASSWORD_RECOVERY' ||
-          event === 'SIGNED_IN' ||
-          event === 'TOKEN_REFRESHED' ||
-          event === 'INITIAL_SESSION')
-      ) {
-        finish(true);
-      }
-    });
-
-    const poll = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session) {
-        finish(true);
-        return;
-      }
-      if (Date.now() >= deadline) {
-        finish(false);
-        return;
-      }
-      window.setTimeout(() => void poll(), 120);
-    };
-
-    void poll();
+  const { error } = await supabase.auth.setSession({
+    access_token,
+    refresh_token,
   });
+
+  if (error) {
+    return {
+      ok: false,
+      message: error.message,
+      hint: 'Peça um novo e-mail de recuperação. Links expiram em poucos minutos.',
+    };
+  }
+
+  cleanAuthParamsFromUrl();
+  return { ok: true };
 }
 
 /**
@@ -108,32 +115,30 @@ export async function establishSessionFromAuthLink(): Promise<AuthLinkResult> {
     };
   }
 
-  const { tokenHash, otpType, code, hasHashTokens } = readPendingAuthLinkParams();
+  const { tokenHash, otpType, code, hasHashAccessTokens, hasRecoveryHashWithoutTokens } =
+    readPendingAuthLinkParams();
 
-  if (tokenHash && otpType === 'recovery') {
+  if (tokenHash && (otpType === 'recovery' || otpType === 'invite')) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
-      type: 'recovery',
+      type: otpType as EmailOtpType,
     });
     if (error) {
       return {
         ok: false,
         message: error.message,
-        hint: 'Peça um novo e-mail em "Esqueci minha senha". Se usa Outlook corporativo, desative "links seguros" para este remetente ou abra no celular.',
+        hint: 'Peça um novo e-mail em "Esqueci minha senha". Se usa Outlook corporativo, abra o link no navegador (não só no painel do e-mail).',
       };
     }
     cleanAuthParamsFromUrl();
     return { ok: true };
   }
 
-  if (code) {
-    // Primeiro deixa o cliente processar a URL (detectSessionInUrl), sem trocar o code duas vezes.
-    const autoSession = await waitForAuthSession(3000);
-    if (autoSession) {
-      cleanAuthParamsFromUrl();
-      return { ok: true };
-    }
+  if (hasHashAccessTokens) {
+    return setSessionFromHashTokens();
+  }
 
+  if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       cleanAuthParamsFromUrl();
@@ -153,23 +158,17 @@ export async function establishSessionFromAuthLink(): Promise<AuthLinkResult> {
       message: expired
         ? 'Este link já foi usado ou expirou (às vezes o app de e-mail abre o link antes de você).'
         : missingVerifier
-          ? 'Abra o link no mesmo navegador em que clicou em "Esqueci minha senha".'
+          ? 'Abra o link no mesmo navegador em que clicou em "Esqueci minha senha", ou atualize o template de e-mail no Supabase (recovery_password.html).'
           : error.message,
-      hint:
-        'Solicite um novo e-mail. No Supabase, use o template em supabase/email_templates/recovery_password.html (token no #, não só ?code=).',
+      hint: 'Solicite um novo e-mail após salvar o template recovery_password.html no painel do Supabase.',
     };
   }
 
-  if (hasHashTokens) {
-    const hasSession = await waitForAuthSession();
-    if (hasSession) {
-      cleanAuthParamsFromUrl();
-      return { ok: true };
-    }
+  if (hasRecoveryHashWithoutTokens) {
     return {
       ok: false,
-      message: 'Não foi possível validar o link de acesso.',
-      hint: 'Solicite um novo e-mail e abra o link assim que chegar.',
+      message: 'Este link já foi consumido antes de você confirmar.',
+      hint: 'Peça um novo e-mail. No Supabase, use o template supabase/email_templates/recovery_password.html.',
     };
   }
 
