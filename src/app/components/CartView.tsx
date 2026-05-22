@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Minus, Trash2, Link as LinkIcon, ShoppingBag } from 'lucide-react';
+import { Plus, Minus, Trash2, Link as LinkIcon, ShoppingBag } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Textarea } from '@/app/components/ui/textarea';
@@ -131,7 +131,7 @@ export const CartView: React.FC<CartViewProps> = ({ onNavigate }) => {
                       size="sm"
                       className="text-destructive h-8 w-8 p-0 flex-shrink-0"
                     >
-                      <X className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
 
@@ -161,7 +161,7 @@ export const CartView: React.FC<CartViewProps> = ({ onNavigate }) => {
                         {formatPriceBRL(getBoxPrice(item.product))}/cx
                       </p>
                       <p className="font-medium" style={{ color: '#1B5B6B' }}>
-                        {item.quantity} cx — R$ {formatPriceBRL(getCartLineTotal(item))}
+                        Total — R$ {formatPriceBRL(getCartLineTotal(item))}
                       </p>
                     </div>
                   </div>

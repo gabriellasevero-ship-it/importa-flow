@@ -18,6 +18,7 @@ import { useCart } from '@/contexts/CartContext';
 import { resolveRepresentativeForCatalogShare } from '@/services/representantes';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
+import { ProductCardAddToCart } from '@/app/components/ProductCardAddToCart';
 import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
 import {
   formatPriceBRL,
@@ -518,14 +519,24 @@ export const Catalog: React.FC<CatalogProps> = ({
               
               {/* Product Info */}
               <div 
-                className="cursor-pointer space-y-1.5 p-2 sm:space-y-2 sm:p-4"
+                className="cursor-pointer space-y-2 p-2 sm:space-y-2.5 sm:p-4"
                 onClick={() => onProductSelect(product)}
               >
-                {/* Product Code */}
-                <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-sm">{product.code}</p>
+                {/* Product Code + Importadora */}
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 truncate text-[10px] font-medium text-muted-foreground sm:text-sm">
+                    {product.code}
+                  </p>
+                  <Badge
+                    variant="outline"
+                    className="max-w-[55%] shrink-0 truncate border-primary/50 text-[10px] font-semibold text-primary sm:max-w-[50%] sm:text-xs"
+                  >
+                    {product.importadoraName}
+                  </Badge>
+                </div>
                 
                 {/* Price Badge */}
-                <div className="space-y-0.5">
+                <div className="space-y-2 sm:space-y-2.5">
                   <div className="inline-block max-w-full">
                     <div className="rounded-sm bg-gradient-to-r from-orange-500 to-orange-400 px-2 py-0.5 text-sm font-bold text-white sm:relative sm:rounded-none sm:px-3 sm:py-1 sm:text-lg">
                       R$ {formatPriceBRL(getUnitPrice(product))}
@@ -533,9 +544,8 @@ export const Catalog: React.FC<CatalogProps> = ({
                       <div className="absolute right-0 top-0 hidden h-0 w-0 translate-x-full border-b-[16px] border-l-[12px] border-t-[16px] border-b-transparent border-l-orange-400 border-t-transparent sm:block" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-muted-foreground sm:text-xs">
-                    <span className="font-medium text-foreground">Caixa:</span> R${' '}
-                    {formatPriceBRL(getBoxPrice(product))}
+                  <p className="text-[10px] font-bold text-foreground sm:text-xs">
+                    Caixa: R$ {formatPriceBRL(getBoxPrice(product))}
                   </p>
                 </div>
 
@@ -555,26 +565,14 @@ export const Catalog: React.FC<CatalogProps> = ({
                   )}
                 </div>
 
-                {/* Badges */}
-                <div className="flex items-center gap-2 pt-1 sm:pt-2">
-                  <Badge variant="outline" className="max-w-full truncate text-[10px] font-semibold border-primary/50 text-primary sm:text-xs">
-                    {product.importadoraName}
-                  </Badge>
-                </div>
-
-                {/* Add to Cart Button */}
-                <Button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    addItem(product, 1);
+                {/* Add to Cart */}
+                <ProductCardAddToCart
+                  product={product}
+                  onAdd={(product, quantity) => {
+                    addItem(product, quantity);
                     toast.success(`${product.name} adicionado ao carrinho`);
                   }}
-                  className="mt-2 h-8 w-full bg-secondary hover:bg-secondary/90 sm:mt-3 sm:h-9"
-                  size="sm"
-                >
-                  <ShoppingCart className="h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />
-                  <span className="text-xs sm:text-sm">Adicionar</span>
-                </Button>
+                />
               </div>
             </CardContent>
           </Card>
@@ -691,7 +689,7 @@ export const Catalog: React.FC<CatalogProps> = ({
                                     size="sm"
                                     className="text-destructive h-7 w-7 p-0 flex-shrink-0"
                                   >
-                                    <X className="w-3.5 h-3.5" />
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
                                 </div>
 
@@ -730,7 +728,7 @@ export const Catalog: React.FC<CatalogProps> = ({
                                     {formatPriceBRL(getBoxPrice(item.product))}/cx
                                   </p>
                                   <p className="text-sm font-bold text-center text-primary w-full">
-                                    {item.quantity} cx — R$ {formatPriceBRL(getCartLineTotal(item))}
+                                    Total — R$ {formatPriceBRL(getCartLineTotal(item))}
                                   </p>
                                 </div>
                               </div>
