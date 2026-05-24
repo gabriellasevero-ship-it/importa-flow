@@ -190,6 +190,11 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
   );
 
   const addToCart = (product: Product, quantity = 1) => {
+    if (product.outOfStock) {
+      toast.error('Este produto está esgotado.');
+      return;
+    }
+
     const existingItem = cart.find(item => item.productId === product.id);
     
     if (existingItem) {

@@ -53,6 +53,7 @@ export async function createProduct(input: {
   image?: string;
   observations?: string;
   active?: boolean;
+  outOfStock?: boolean;
   material?: string;
   detalhe1?: string;
   detalhe2?: string;
@@ -75,6 +76,7 @@ export async function createProduct(input: {
       image: input.image ?? null,
       observations: input.observations ?? null,
       active: input.active ?? true,
+      out_of_stock: input.outOfStock ?? false,
       material: input.material ?? null,
       detalhe1: input.detalhe1 ?? null,
       detalhe2: input.detalhe2 ?? null,
@@ -99,6 +101,7 @@ export async function updateProduct(
     image: string | null;
     observations: string;
     active: boolean;
+    outOfStock: boolean;
     material: string;
     detalhe1: string;
     detalhe2: string;
@@ -118,6 +121,7 @@ export async function updateProduct(
   if (updates.image !== undefined) db.image = updates.image;
   if (updates.observations != null) db.observations = updates.observations;
   if (updates.active != null) db.active = updates.active;
+  if (updates.outOfStock != null) db.out_of_stock = updates.outOfStock;
   if (updates.material != null) db.material = updates.material;
   if (updates.detalhe1 != null) db.detalhe1 = updates.detalhe1;
   if (updates.detalhe2 != null) db.detalhe2 = updates.detalhe2;

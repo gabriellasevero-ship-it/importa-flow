@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Minus, Plus, ShoppingCart } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
+import { Badge } from '@/app/components/ui/badge';
 import { Product } from '@/types';
 
 interface ProductCardAddToCartProps {
@@ -11,10 +12,36 @@ interface ProductCardAddToCartProps {
 
 export const ProductCardAddToCart: React.FC<ProductCardAddToCartProps> = ({ product, onAdd }) => {
   const [quantity, setQuantity] = useState(1);
+  const isOutOfStock = Boolean(product.outOfStock);
 
   const updateQuantity = (value: number) => {
     setQuantity(Math.max(1, value));
   };
+
+  if (isOutOfStock) {
+    return (
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Badge
+          variant="outline"
+          className="border-amber-500 bg-white text-xs font-semibold text-amber-700"
+        >
+          Esgotado
+        </Badge>
+        <Button
+          type="button"
+          disabled
+          className="h-8 min-w-0 flex-1 bg-muted text-muted-foreground sm:h-9"
+          size="sm"
+        >
+          <ShoppingCart className="h-3.5 w-3.5 shrink-0 sm:mr-1.5 sm:h-4 sm:w-4" />
+          <span className="truncate text-xs sm:text-sm">Indisponível</span>
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div

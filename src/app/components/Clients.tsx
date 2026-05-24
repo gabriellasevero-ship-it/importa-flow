@@ -13,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/app/components/ui/dropdown-menu';
+import { ImageWithFallback } from '@/app/components/ui/image';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCatalogClients } from '@/contexts/CatalogClientsContext';
@@ -1138,8 +1139,16 @@ export const Clients: React.FC = () => {
                       className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
                     >
                       <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-muted">
-                          <Package className="h-8 w-8 text-muted-foreground" />
+                        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+                          {item.product.image ? (
+                            <ImageWithFallback
+                              src={item.product.image}
+                              alt={item.product.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <Package className="h-8 w-8 text-muted-foreground" />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="mb-1 font-medium">{item.product.name}</p>

@@ -28,6 +28,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/app/components/ui/dropdown-menu';
+import { ImageWithFallback } from '@/app/components/ui/image';
 
 type ViewMode = 'list' | 'detail';
 type FilterType = 'all' | 'unread' | 'cliente' | 'representante';
@@ -964,8 +965,16 @@ export const Orders: React.FC = () => {
                       className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
                     >
                       <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-muted sm:h-16 sm:w-16">
-                          <Package className="h-7 w-7 text-muted-foreground sm:h-8 sm:w-8" />
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted sm:h-16 sm:w-16">
+                          {item.product.image ? (
+                            <ImageWithFallback
+                              src={item.product.image}
+                              alt={item.product.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <Package className="h-7 w-7 text-muted-foreground sm:h-8 sm:w-8" />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="mb-1 line-clamp-2 font-medium leading-snug">{item.product.name}</p>

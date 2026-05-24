@@ -61,6 +61,7 @@ interface Product {
   dimensions: string;
   image?: string;
   published: boolean;
+  outOfStock: boolean;
   detalhe: string;
 }
 
@@ -96,6 +97,7 @@ function apiProductToLocal(p: ApiProduct): Product {
     dimensions: p.dimensions ?? '',
     image: p.image,
     published: p.active,
+    outOfStock: p.outOfStock ?? false,
     detalhe: p.detalhe1 ?? '',
   };
 }
@@ -186,6 +188,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     dimensions: '',
     detalhe: '',
     published: true,
+    outOfStock: false,
   });
 
   useEffect(() => {
@@ -325,6 +328,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       dimensions: '',
       detalhe: '',
       published: true,
+      outOfStock: false,
     });
     setShowProductDialog(true);
   };
@@ -348,6 +352,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       dimensions: product.dimensions,
       detalhe: product.detalhe,
       published: product.published,
+      outOfStock: product.outOfStock,
     });
     setShowProductDialog(true);
   };
@@ -379,6 +384,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
     setProductSaving(true);
     try {
+      const outOfStock = productFormData.published && productFormData.outOfStock;
+
       let uploadedImageUrl: string | undefined;
       if (productImageFile) {
         if (!isSupabaseConfigured()) {
@@ -406,6 +413,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           dimensions: productFormData.dimensions.trim() || undefined,
           detalhe1: productFormData.detalhe.trim() || undefined,
           active: productFormData.published,
+          outOfStock,
           ...imageUpdate,
         });
         toast.success('Produto atualizado com sucesso!');
@@ -421,6 +429,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           dimensions: productFormData.dimensions.trim() || undefined,
           detalhe1: productFormData.detalhe.trim() || undefined,
           active: productFormData.published,
+          outOfStock,
           image: uploadedImageUrl,
         });
         toast.success('Produto adicionado com sucesso!');
@@ -1158,7 +1167,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                           </div>
 
                           <div className="flex shrink-0 flex-col items-end gap-2 self-start">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
                               {product.published ? (
                                 <Badge variant="default" className="whitespace-nowrap bg-green-600 text-xs">
                                   <Eye className="mr-1 h-3 w-3" />
@@ -1168,6 +1177,14 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                                 <Badge variant="secondary" className="whitespace-nowrap text-xs">
                                   <EyeOff className="mr-1 h-3 w-3" />
                                   Rascunho
+                                </Badge>
+                              )}
+                              {product.published && product.outOfStock && (
+                                <Badge
+                                  variant="outline"
+                                  className="whitespace-nowrap border-amber-500 bg-amber-50 text-xs text-amber-700"
+                                >
+                                  Esgotado
                                 </Badge>
                               )}
                               <Button
@@ -1775,7 +1792,36 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                   id="published"
                   checked={productFormData.published}
                   onCheckedChange={(checked) =>
-                    setProductFormData({ ...productFormData, published: checked })
+                    setProductFormData({
+                      ...productFormData,
+                      published: checked,
+                      outOfStock: checked ? productFormData.outOfStock : false,
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between rounded-lg bg-muted/50 p-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="outOfStock" className="text-base">
+                    Produto esgotado
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {productFormData.published
+                      ? productFormData.outOfStock
+                        ? 'Visível no catálogo, mas sem permitir adicionar ao carrinho'
+                        : 'Produto disponível para pedido no catálogo'
+                      : 'Disponível apenas para produtos publicados'}
+                  </p>
+                </div>
+                <Switch
+                  id="outOfStock"
+                  checked={productFormData.outOfStock}
+                  disabled={!productFormData.published}
+                  onCheckedChange={(checked) =>
+                    setProductFormData({ ...productFormData, outOfStock: checked })
                   }
                 />
               </div>

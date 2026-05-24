@@ -62,7 +62,7 @@ export async function fetchOrders(representanteId: string): Promise<Order[]> {
   const orderIds = ordersData.map(o => o.id);
   const { data: itemsData, error: itemsError } = await supabase
     .from('order_items')
-    .select('*, products(id, importadora_id, code, name, description, price, min_order, category, subcategory, image, observations, active, material, detalhe1, detalhe2, detalhe3, dimensions, created_at, importadoras(name))')
+    .select('*, products(id, importadora_id, code, name, description, price, min_order, category, subcategory, image, observations, active, out_of_stock, material, detalhe1, detalhe2, detalhe3, dimensions, created_at, importadoras(name))')
     .in('order_id', orderIds);
   if (itemsError) throw itemsError;
 

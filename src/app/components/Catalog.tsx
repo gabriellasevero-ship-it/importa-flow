@@ -569,6 +569,10 @@ export const Catalog: React.FC<CatalogProps> = ({
                 <ProductCardAddToCart
                   product={product}
                   onAdd={(product, quantity) => {
+                    if (product.outOfStock) {
+                      toast.error('Este produto está esgotado.');
+                      return;
+                    }
                     addItem(product, quantity);
                     toast.success(`${product.name} adicionado ao carrinho`);
                   }}

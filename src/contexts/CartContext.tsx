@@ -30,6 +30,8 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
   const [items, setItems] = useState<CartItem[]>([]);
 
   const addItem = (product: Product, quantity: number, observations?: string) => {
+    if (product.outOfStock) return;
+
     setItems(prevItems => {
       const existingItem = prevItems.find(item => item.productId === product.id);
       

@@ -57,6 +57,7 @@ type DbProduct = {
   image: string | null;
   observations: string | null;
   active: boolean;
+  out_of_stock?: boolean;
   material: string | null;
   detalhe1: string | null;
   detalhe2: string | null;
@@ -203,6 +204,7 @@ export function mapProduct(row: DbProduct): Product {
     image: row.image ?? undefined,
     observations: row.observations ?? undefined,
     active: row.active,
+    outOfStock: row.out_of_stock ?? false,
     createdAt: new Date(row.created_at),
     material: row.material ?? undefined,
     detalhe1: row.detalhe1 ?? undefined,

@@ -44,6 +44,8 @@ export interface Product {
   image?: string;
   observations?: string;
   active: boolean;
+  /** Visível no catálogo, mas sem permitir adicionar ao carrinho. */
+  outOfStock?: boolean;
   createdAt: Date;
   material?: string; // Ex: "plástico", "metal", "madeira"
   detalhe1?: string; // Ex: "cores sortidas"

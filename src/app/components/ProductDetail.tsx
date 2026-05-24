@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Plus, Minus, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, Plus, Minus, ShoppingCart, Package } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Textarea } from '@/app/components/ui/textarea';
@@ -23,7 +23,13 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
 
   if (!product) return null;
 
+  const isOutOfStock = Boolean(product.outOfStock);
+
   const handleAddToCart = () => {
+    if (isOutOfStock) {
+      toast.error('Este produto está esgotado.');
+      return;
+    }
     addItem(product, quantity, observations);
     toast.success('Produto adicionado ao carrinho!');
     onClose();
@@ -60,6 +66,11 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
                 <Badge variant="secondary">{product.category}</Badge>
                 {product.subcategory && (
                   <Badge variant="outline">{product.subcategory}</Badge>
+                )}
+                {isOutOfStock && (
+                  <Badge variant="outline" className="border-amber-500 text-amber-700">
+                    Esgotado
+                  </Badge>
                 )}
               </div>
             </div>
@@ -139,6 +150,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
             </Card>
 
             {/* Quantity Selector */}
+            {!isOutOfStock && (
             <Card>
               <CardContent className="p-4">
                 <label className="text-sm mb-3 block">Quantidade de Caixas</label>
@@ -172,8 +184,10 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
                 </div>
               </CardContent>
             </Card>
+            )}
 
             {/* Observations */}
+            {!isOutOfStock && (
             <div className="space-y-2">
               <label className="text-sm">Observações (opcional)</label>
               <Textarea
@@ -183,15 +197,17 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
                 rows={3}
               />
             </div>
+            )}
 
             {/* Add to Cart Button */}
             <Button
               onClick={handleAddToCart}
-              className="w-full py-6 text-lg bg-secondary hover:bg-secondary/90"
+              disabled={isOutOfStock}
+              className="w-full py-6 text-lg bg-secondary hover:bg-secondary/90 disabled:opacity-60"
               size="lg"
             >
               <ShoppingCart className="w-5 h-5 mr-2" />
-              Adicionar ao Carrinho
+              {isOutOfStock ? 'Produto esgotado' : 'Adicionar ao Carrinho'}
             </Button>
           </div>
         </div>
@@ -199,5 +215,3 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({ product, onClose }
     </Dialog>
   );
 };
-
-import { Package } from 'lucide-react';
