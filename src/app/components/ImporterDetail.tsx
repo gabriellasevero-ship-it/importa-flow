@@ -61,6 +61,7 @@ interface Product {
   dimensions: string;
   image?: string;
   published: boolean;
+  detalhe: string;
 }
 
 interface Importer {
@@ -95,6 +96,7 @@ function apiProductToLocal(p: ApiProduct): Product {
     dimensions: p.dimensions ?? '',
     image: p.image,
     published: p.active,
+    detalhe: p.detalhe1 ?? '',
   };
 }
 
@@ -182,6 +184,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     material: '',
     unitsPerPackage: '',
     dimensions: '',
+    detalhe: '',
     published: true,
   });
 
@@ -320,6 +323,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       material: '',
       unitsPerPackage: '',
       dimensions: '',
+      detalhe: '',
       published: true,
     });
     setShowProductDialog(true);
@@ -338,10 +342,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       name: product.name,
       category: product.category,
       price: product.price.toString(),
-      quantityPerBox: product.quantityPerBox.toString(),
+      quantityPerBox: product.quantityPerBox > 0 ? product.quantityPerBox.toString() : '',
       material: product.material,
       unitsPerPackage: product.unitsPerPackage.toString(),
       dimensions: product.dimensions,
+      detalhe: product.detalhe,
       published: product.published,
     });
     setShowProductDialog(true);
@@ -352,7 +357,15 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     const name = productFormData.name.trim();
     const category = productFormData.category.trim();
     const price = Number(productFormData.price);
-    const minOrder = Number.parseInt(productFormData.quantityPerBox, 10) || 1;
+    const qtyRaw = productFormData.quantityPerBox.trim();
+    let minOrder = 0;
+    if (qtyRaw) {
+      minOrder = Number.parseInt(qtyRaw, 10);
+      if (!Number.isFinite(minOrder) || minOrder <= 0) {
+        toast.error('A quantidade por caixa deve ser maior que zero.');
+        return;
+      }
+    }
 
     if (!code || !name || !category || !productFormData.price) {
       toast.error('Preencha código, nome, categoria e preço.');
@@ -361,11 +374,6 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
     if (!Number.isFinite(price) || price <= 0) {
       toast.error('Informe um preço maior que zero.');
-      return;
-    }
-
-    if (minOrder <= 0) {
-      toast.error('A quantidade por caixa deve ser maior que zero.');
       return;
     }
 
@@ -396,6 +404,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           minOrder,
           material: productFormData.material.trim() || undefined,
           dimensions: productFormData.dimensions.trim() || undefined,
+          detalhe1: productFormData.detalhe.trim() || undefined,
           active: productFormData.published,
           ...imageUpdate,
         });
@@ -410,6 +419,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           minOrder,
           material: productFormData.material.trim() || undefined,
           dimensions: productFormData.dimensions.trim() || undefined,
+          detalhe1: productFormData.detalhe.trim() || undefined,
           active: productFormData.published,
           image: uploadedImageUrl,
         });
@@ -1044,11 +1054,58 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             </Card>
           ) : filteredProducts.length > 0 ? (
             <div className="space-y-3">
-              {filteredProducts.map((product) => (
+              {filteredProducts.map((product) => {
+                const metaSections = [
+                  (product.quantityPerBox > 0 || product.unitsPerPackage > 0) && {
+                    key: 'qty',
+                    content: (
+                      <>
+                        {product.quantityPerBox > 0 && (
+                          <p className="text-muted-foreground">
+                            <span className="font-medium text-foreground">{product.quantityPerBox}</span> unid/caixa
+                          </p>
+                        )}
+                        {product.unitsPerPackage > 0 && (
+                          <p className="text-muted-foreground">
+                            Sacola:{' '}
+                            <span className="font-medium text-foreground">{product.unitsPerPackage}</span> unid
+                          </p>
+                        )}
+                      </>
+                    ),
+                  },
+                  product.material && {
+                    key: 'material',
+                    content: (
+                      <p className="break-words text-muted-foreground">{product.material}</p>
+                    ),
+                  },
+                  product.dimensions && {
+                    key: 'dimensions',
+                    content: <p className="break-words text-muted-foreground">Dim: {product.dimensions}</p>,
+                  },
+                ].filter((section): section is { key: string; content: React.ReactNode } => Boolean(section));
+
+                const hasSecondRow = metaSections.length > 0 || Boolean(product.detalhe);
+
+                const priceBlock = (
+                  <div className="ml-auto shrink-0 text-right">
+                    <div className="whitespace-nowrap text-lg font-bold text-primary">
+                      R$ {product.price.toFixed(2)}
+                      <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
+                    </div>
+                    {product.quantityPerBox > 0 && (
+                      <p className="whitespace-nowrap text-xs text-muted-foreground">
+                        Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                );
+
+                return (
                 <Card key={product.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-3 sm:p-4">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex gap-3">
                       {showProductDeleteOptions && (
                         <Checkbox
                           className="mt-1 shrink-0"
@@ -1065,95 +1122,106 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                           aria-label={`Selecionar ${product.code}`}
                         />
                       )}
-                      {/* Imagem do Produto */}
-                      <div className="relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-muted group sm:h-20 sm:w-20">
+                      <div className="relative h-20 w-20 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-muted group sm:h-24 sm:w-24">
                         {product.image ? (
                           <>
                             <ImageWithFallback
                               src={product.image}
                               alt={product.name}
-                              className="w-full h-full object-cover"
+                              className="h-full w-full object-cover"
                             />
                             <div
-                              className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                              className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
                               onClick={() => handleImageZoom(product.image!)}
                             >
-                              <ZoomIn className="w-6 h-6 text-white" />
+                              <ZoomIn className="h-5 w-5 text-white" />
                             </div>
                           </>
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <Package className="w-8 h-8 text-muted-foreground" />
-                          </div>
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Package className="h-9 w-9 text-muted-foreground sm:h-10 sm:w-10" />
+                            </div>
                         )}
                       </div>
 
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-1 flex flex-wrap items-center gap-2">
-                            <Badge variant="outline" className="font-mono text-xs">
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
+                        {/* Linha 1: identidade + status/editar no topo */}
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <Badge variant="outline" className="mb-1 font-mono text-xs">
                               {product.code}
                             </Badge>
-                            {product.published ? (
-                              <Badge variant="default" className="bg-green-600 text-xs">
-                                <Eye className="w-3 h-3 mr-1" />
-                                Publicado
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs">
-                                <EyeOff className="w-3 h-3 mr-1" />
-                                Rascunho
-                              </Badge>
+                            <h4 className="font-semibold leading-snug">{product.name}</h4>
+                            {product.category && (
+                              <p className="truncate text-xs text-muted-foreground">{product.category}</p>
                             )}
                           </div>
-                          <h4 className="font-semibold leading-snug">{product.name}</h4>
-                          <p className="text-xs text-muted-foreground">{product.category}</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 w-9 shrink-0 p-0"
-                          onClick={() => handleEditProduct(product)}
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      </div>
 
-                      <div className="grid grid-cols-2 gap-3 border-t pt-3 text-sm sm:grid-cols-3 md:grid-cols-4 md:border-0 md:pt-0">
-                        <div className="text-sm space-y-1">
-                          <p className="text-muted-foreground">
-                            <span className="font-medium text-foreground">{product.quantityPerBox}</span> unid/caixa
-                          </p>
-                          <p className="text-muted-foreground">
-                            Sacola: <span className="font-medium text-foreground">{product.unitsPerPackage}</span> unid
-                          </p>
-                        </div>
-
-                        {/* Material e Dimensões */}
-                        <div className="text-sm space-y-1">
-                          <p className="text-muted-foreground truncate">
-                            {product.material}
-                          </p>
-                          <p className="text-muted-foreground">
-                            Dim: {product.dimensions}
-                          </p>
-                        </div>
-
-                        <div className="col-span-2 flex flex-col items-end justify-center gap-0.5 sm:col-span-1">
-                          <span className="text-xs text-muted-foreground sm:hidden">Preços</span>
-                          <div className="text-lg font-bold text-primary sm:text-xl">
-                            R$ {product.price.toFixed(2)}
-                            <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
+                          <div className="flex shrink-0 flex-col items-end gap-2 self-start">
+                            <div className="flex items-center gap-2">
+                              {product.published ? (
+                                <Badge variant="default" className="whitespace-nowrap bg-green-600 text-xs">
+                                  <Eye className="mr-1 h-3 w-3" />
+                                  Publicado
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="whitespace-nowrap text-xs">
+                                  <EyeOff className="mr-1 h-3 w-3" />
+                                  Rascunho
+                                </Badge>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 w-9 shrink-0 p-0"
+                                onClick={() => handleEditProduct(product)}
+                                title="Editar"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            {!hasSecondRow && (
+                              <div className="text-right">
+                                <div className="whitespace-nowrap text-lg font-bold text-primary">
+                                  R$ {product.price.toFixed(2)}
+                                  <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
+                                </div>
+                                {product.quantityPerBox > 0 && (
+                                  <p className="whitespace-nowrap text-xs text-muted-foreground">
+                                    Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs text-muted-foreground">
-                            Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
-                          </p>
                         </div>
+
+                        {/* Linha 2: metadados + preço na ponta direita */}
+                        {hasSecondRow && (
+                          <div className="flex items-start gap-4 border-t pt-2 text-sm">
+                            <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-5 sm:gap-y-2">
+                              {metaSections.map((section) => (
+                                <div key={section.key} className="min-w-0 shrink-0 sm:max-w-[11rem]">
+                                  {section.content}
+                                </div>
+                              ))}
+                              {product.detalhe && (
+                                <div className="min-w-0 flex-1 sm:border-l sm:border-border sm:pl-5">
+                                  <p className="break-words leading-snug text-muted-foreground">
+                                    {product.detalhe}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            {priceBlock}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           ) : products.length === 0 ? (
             <Card className="p-12">
@@ -1512,8 +1580,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           if (!open) resetProductImageDraft();
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden sm:max-w-4xl">
+          <DialogHeader className="shrink-0">
             <DialogTitle>
               {editingProduct ? 'Editar Produto' : 'Adicionar Produto'}
             </DialogTitle>
@@ -1523,7 +1591,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 : 'Adicione um novo produto ao catálogo'}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-4 py-4">
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="code">Código do Produto *</Label>
@@ -1627,6 +1695,17 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 />
               </div>
               <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="detalhe">Detalhe</Label>
+                <Input
+                  id="detalhe"
+                  value={productFormData.detalhe}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, detalhe: e.target.value })
+                  }
+                  placeholder="Ex: Cores sortidas"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="productPhoto">Foto do produto</Label>
                 <div className="flex flex-col sm:flex-row gap-4 items-start">
                   <div className="w-full sm:w-40 h-40 rounded-lg border bg-muted/30 overflow-hidden flex items-center justify-center shrink-0">
@@ -1702,7 +1781,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               </div>
             </div>
           </div>
-          <DialogFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <DialogFooter className="shrink-0 w-full flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
             {editingProduct && (
               <Button
                 variant="destructive"
@@ -1713,23 +1792,21 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
                 Excluir produto
               </Button>
             )}
-            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
-              <Button
-                variant="outline"
-                onClick={() => setShowProductDialog(false)}
-                className="w-full"
-                disabled={productSaving}
-              >
-                Cancelar
-              </Button>
-              <Button
-                onClick={handleSaveProduct}
-                className="w-full bg-primary hover:bg-primary/90"
-                disabled={productSaving}
-              >
-                {productSaving ? 'Salvando…' : editingProduct ? 'Atualizar' : 'Adicionar'}
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              onClick={() => setShowProductDialog(false)}
+              className="w-full sm:w-auto"
+              disabled={productSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveProduct}
+              className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+              disabled={productSaving}
+            >
+              {productSaving ? 'Salvando…' : editingProduct ? 'Atualizar' : 'Adicionar'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
