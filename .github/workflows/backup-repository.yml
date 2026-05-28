@@ -1,0 +1,57 @@
+name: Backup para repositório espelho
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Diário às 06:00 UTC (03:00 horário de Brasília)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-backup
+  cancel-in-progress: false
+
+jobs:
+  mirror-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout com histórico completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar configuração do backup
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          BACKUP_REPO: ${{ vars.BACKUP_REPO_URL }}
+        run: |
+          if [ -z "$BACKUP_TOKEN" ]; then
+            echo "::error::Secret BACKUP_REPO_TOKEN não configurado."
+            exit 1
+          fi
+          if [ -z "$BACKUP_REPO" ]; then
+            echo "::error::Variable BACKUP_REPO_URL não configurada."
+            exit 1
+          fi
+
+      - name: Espelhar branches e tags no repositório de backup
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          BACKUP_REPO: ${{ vars.BACKUP_REPO_URL }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          REPO_PATH="${BACKUP_REPO#https://github.com/}"
+          REPO_PATH="${REPO_PATH#http://github.com/}"
+          REPO_PATH="${REPO_PATH%.git}"
+
+          git remote add backup "https://x-access-token:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"
+          git push backup --all --force
+          git push backup --tags --force
