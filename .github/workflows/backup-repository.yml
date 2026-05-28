@@ -42,7 +42,10 @@ jobs:
         env:
           BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
           BACKUP_REPO: ${{ env.BACKUP_REPO_URL }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -50,6 +53,22 @@ jobs:
           REPO_PATH="${REPO_PATH#http://github.com/}"
           REPO_PATH="${REPO_PATH%.git}"
 
-          git remote add backup "https://x-access-token:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"
+          # Fine-grained PAT: usuário GitHub + token como senha
+          BACKUP_URL="https://${GITHUB_OWNER}:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"
+
+          echo "Testando acesso ao repositório de backup (${REPO_PATH})..."
+          if ! git ls-remote "$BACKUP_URL" HEAD; then
+            echo "::error::Não foi possível acessar importa-flow-backup."
+            echo "::error::Confira: (1) o repo existe e é privado, (2) o token tem Contents Read and write no importa-flow-backup, (3) o secret BACKUP_REPO_TOKEN foi colado sem espaços extras."
+            exit 128
+          fi
+
+          git remote add backup "$BACKUP_URL"
+
+          echo "Enviando branches..."
           git push backup --all --force
+
+          echo "Enviando tags..."
           git push backup --tags --force
+
+          echo "Backup concluído com sucesso."
