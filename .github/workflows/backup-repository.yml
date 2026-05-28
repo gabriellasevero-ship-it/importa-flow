@@ -16,7 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BACKUP_REPO_URL: https://github.com/gabriellasevero-ship-it/importa-flow-backup
+  BACKUP_OWNER: gabriellasevero-ship-it
+  BACKUP_REPO_NAME: importa-flow-backup
 
 jobs:
   mirror-backup:
@@ -29,19 +30,54 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validar configuração do backup
+      - name: Validar token e acesso ao repositório de backup
         env:
           BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
         run: |
+          set -euo pipefail
+
           if [ -z "$BACKUP_TOKEN" ]; then
-            echo "::error::Secret BACKUP_REPO_TOKEN não configurado em importa-flow → Settings → Secrets and variables → Actions → Secrets."
+            echo "::error::Secret BACKUP_REPO_TOKEN não configurado."
+            echo "::error::Crie em: importa-flow → Settings → Secrets and variables → Actions → Secrets"
             exit 1
           fi
+
+          HTTP_CODE=$(curl -s -o /tmp/repo-check.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${BACKUP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${BACKUP_OWNER}/${BACKUP_REPO_NAME}")
+
+          echo "Resposta da API GitHub para ${BACKUP_OWNER}/${BACKUP_REPO_NAME}: HTTP ${HTTP_CODE}"
+
+          case "$HTTP_CODE" in
+            200)
+              echo "Token válido e repositório de backup acessível."
+              ;;
+            401)
+              echo "::error::Token inválido ou expirado. Gere um token novo e atualize BACKUP_REPO_TOKEN."
+              exit 1
+              ;;
+            404)
+              echo "::error::Repositório ${BACKUP_OWNER}/${BACKUP_REPO_NAME} não encontrado OU o token não tem acesso a ele."
+              echo "::error::Crie o repo em github.com/new (Private, sem README) e no token marque ONLY importa-flow-backup com Contents: Read and write."
+              cat /tmp/repo-check.json || true
+              exit 1
+              ;;
+            403)
+              echo "::error::Token sem permissão suficiente. No token, defina Contents: Read and write para importa-flow-backup."
+              cat /tmp/repo-check.json || true
+              exit 1
+              ;;
+            *)
+              echo "::error::Erro inesperado ao validar backup (HTTP ${HTTP_CODE})."
+              cat /tmp/repo-check.json || true
+              exit 1
+              ;;
+          esac
 
       - name: Espelhar branches e tags no repositório de backup
         env:
           BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
-          BACKUP_REPO: ${{ env.BACKUP_REPO_URL }}
           GITHUB_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
@@ -49,26 +85,27 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          REPO_PATH="${BACKUP_REPO#https://github.com/}"
-          REPO_PATH="${REPO_PATH#http://github.com/}"
-          REPO_PATH="${REPO_PATH%.git}"
+          REPO_PATH="${BACKUP_OWNER}/${BACKUP_REPO_NAME}"
 
-          # Fine-grained PAT: usuário GitHub + token como senha
-          BACKUP_URL="https://${GITHUB_OWNER}:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"
+          try_push() {
+            local url="$1"
+            git remote remove backup 2>/dev/null || true
+            git remote add backup "$url"
+            git push backup --all --force
+            git push backup --tags --force
+          }
 
-          echo "Testando acesso ao repositório de backup (${REPO_PATH})..."
-          if ! git ls-remote "$BACKUP_URL" HEAD; then
-            echo "::error::Não foi possível acessar importa-flow-backup."
-            echo "::error::Confira: (1) o repo existe e é privado, (2) o token tem Contents Read and write no importa-flow-backup, (3) o secret BACKUP_REPO_TOKEN foi colado sem espaços extras."
-            exit 128
+          echo "Tentando autenticação fine-grained (usuário + token)..."
+          if try_push "https://${GITHUB_OWNER}:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"; then
+            echo "Backup concluído com sucesso."
+            exit 0
           fi
 
-          git remote add backup "$BACKUP_URL"
+          echo "Tentando autenticação classic (token como usuário)..."
+          if try_push "https://${BACKUP_TOKEN}@github.com/${REPO_PATH}.git"; then
+            echo "Backup concluído com sucesso."
+            exit 0
+          fi
 
-          echo "Enviando branches..."
-          git push backup --all --force
-
-          echo "Enviando tags..."
-          git push backup --tags --force
-
-          echo "Backup concluído com sucesso."
+          echo "::error::Token reconhecido pela API, mas git push falhou. Recrie um Classic token em github.com/settings/tokens/new marcando apenas 'repo'."
+          exit 128
