@@ -15,6 +15,9 @@ concurrency:
   group: repository-backup
   cancel-in-progress: false
 
+env:
+  BACKUP_REPO_URL: https://github.com/gabriellasevero-ship-it/importa-flow-backup
+
 jobs:
   mirror-backup:
     runs-on: ubuntu-latest
@@ -22,28 +25,23 @@ jobs:
 
     steps:
       - name: Checkout com histórico completo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Validar configuração do backup
         env:
           BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
-          BACKUP_REPO: ${{ vars.BACKUP_REPO_URL }}
         run: |
           if [ -z "$BACKUP_TOKEN" ]; then
-            echo "::error::Secret BACKUP_REPO_TOKEN não configurado."
-            exit 1
-          fi
-          if [ -z "$BACKUP_REPO" ]; then
-            echo "::error::Variable BACKUP_REPO_URL não configurada."
+            echo "::error::Secret BACKUP_REPO_TOKEN não configurado em importa-flow → Settings → Secrets and variables → Actions → Secrets."
             exit 1
           fi
 
       - name: Espelhar branches e tags no repositório de backup
         env:
           BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
-          BACKUP_REPO: ${{ vars.BACKUP_REPO_URL }}
+          BACKUP_REPO: ${{ env.BACKUP_REPO_URL }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
