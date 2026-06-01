@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Search, Filter, Camera, Package, ShoppingCart, X, Plus, Minus, Trash2, Link as LinkIcon, ShoppingBag, GitCompare, Check, AlertCircle, ChevronDown } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
@@ -19,7 +19,11 @@ import { resolveRepresentativeForCatalogShare } from '@/services/representantes'
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { ProductCardAddToCart } from '@/app/components/ProductCardAddToCart';
-import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
+import {
+  getCatalogCategoryOptions,
+  getCatalogSubcategoryOptions,
+  productMatchesCatalogFilters,
+} from '@/lib/catalogFilters';
 import {
   formatPriceBRL,
   getBoxPrice,
@@ -85,10 +89,21 @@ export const Catalog: React.FC<CatalogProps> = ({
     return acc;
   }, {} as Record<string, { importadoraName: string; items: typeof items; total: number }>);
 
-  // Get available subcategories based on selected category
-  const availableSubcategories = selectedCategory === 'all' 
-    ? [] 
-    : categories.find(cat => cat.name === selectedCategory)?.subcategories || [];
+  const categoryOptions = useMemo(
+    () => getCatalogCategoryOptions(products, selectedImportadoras, categories),
+    [products, selectedImportadoras, categories]
+  );
+
+  const availableSubcategories = useMemo(
+    () =>
+      getCatalogSubcategoryOptions(
+        products,
+        selectedImportadoras,
+        selectedCategory,
+        categories
+      ),
+    [products, selectedImportadoras, selectedCategory, categories]
+  );
 
   const filteredProducts = products.filter((product) =>
     productMatchesCatalogFilters(product, {
@@ -352,8 +367,10 @@ export const Catalog: React.FC<CatalogProps> = ({
             </SelectTrigger>
             <SelectContent position="popper" className="z-[100] max-h-[280px]">
               <SelectItem value="all">Todas as categorias</SelectItem>
-              {categories.map(cat => (
-                <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+              {categoryOptions.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -371,8 +388,10 @@ export const Catalog: React.FC<CatalogProps> = ({
             </SelectTrigger>
             <SelectContent position="popper" className="z-[100] max-h-[280px]">
               <SelectItem value="all">Todas as subcategorias</SelectItem>
-              {availableSubcategories.map(subcat => (
-                <SelectItem key={subcat} value={subcat}>{subcat}</SelectItem>
+              {availableSubcategories.map((subcat) => (
+                <SelectItem key={subcat} value={subcat}>
+                  {subcat}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -401,8 +420,10 @@ export const Catalog: React.FC<CatalogProps> = ({
           </SelectTrigger>
           <SelectContent position="popper" className="z-[100] max-h-[280px]">
             <SelectItem value="all">Todas as categorias</SelectItem>
-            {categories.map(cat => (
-              <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+            {categoryOptions.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -420,8 +441,10 @@ export const Catalog: React.FC<CatalogProps> = ({
           </SelectTrigger>
           <SelectContent position="popper" className="z-[100] max-h-[280px]">
             <SelectItem value="all">Todas as subcategorias</SelectItem>
-            {availableSubcategories.map(subcat => (
-              <SelectItem key={subcat} value={subcat}>{subcat}</SelectItem>
+            {availableSubcategories.map((subcat) => (
+              <SelectItem key={subcat} value={subcat}>
+                {subcat}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>

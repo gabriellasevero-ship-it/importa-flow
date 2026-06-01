@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { Search, Filter, Package, ShoppingCart, Plus, Minus, User, LogIn, LogOut, History, Trash2, ShoppingBag, AlertCircle, Check, ArrowLeft, Building, DollarSign, FileText, Camera, Mail, MessageCircle, Phone, ChevronDown } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
@@ -20,7 +20,11 @@ import { useOrders } from '@/contexts/OrdersContext';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { ProductCardAddToCart } from '@/app/components/ProductCardAddToCart';
-import { productMatchesCatalogFilters } from '@/lib/catalogFilters';
+import {
+  getCatalogCategoryOptions,
+  getCatalogSubcategoryOptions,
+  productMatchesCatalogFilters,
+} from '@/lib/catalogFilters';
 import {
   formatPriceBRL,
   getBoxPrice,
@@ -176,9 +180,21 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
     orderConfirmPendingAfterAuthRef.current = false;
   }, [showLoginDialog, showRegisterDialog, isAuthenticated]);
 
-  const availableSubcategories = selectedCategory === 'all' 
-    ? [] 
-    : categoriesList.find(cat => cat.name === selectedCategory)?.subcategories || [];
+  const categoryOptions = useMemo(
+    () => getCatalogCategoryOptions(productsList, selectedImportadoras, categoriesList),
+    [productsList, selectedImportadoras, categoriesList]
+  );
+
+  const availableSubcategories = useMemo(
+    () =>
+      getCatalogSubcategoryOptions(
+        productsList,
+        selectedImportadoras,
+        selectedCategory,
+        categoriesList
+      ),
+    [productsList, selectedImportadoras, selectedCategory, categoriesList]
+  );
 
   const filteredProducts = productsList.filter((product) =>
     productMatchesCatalogFilters(product, {
@@ -582,9 +598,9 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
               </SelectTrigger>
               <SelectContent position="popper" className="z-[100] max-h-[280px]">
                 <SelectItem value="all">Todas as categorias</SelectItem>
-                {categoriesList.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.name}>
-                    {cat.name}
+                {categoryOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -628,9 +644,9 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
             </SelectTrigger>
             <SelectContent position="popper" className="z-[100] max-h-[280px]">
               <SelectItem value="all">Todas as categorias</SelectItem>
-              {categoriesList.map((cat) => (
-                <SelectItem key={cat.id} value={cat.name}>
-                  {cat.name}
+              {categoryOptions.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
                 </SelectItem>
               ))}
             </SelectContent>
