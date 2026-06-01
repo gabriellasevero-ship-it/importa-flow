@@ -1,0 +1,319 @@
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import { Toaster } from '@/app/components/ui/sonner';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { useNotifications } from '@/hooks/useData';
+import { useScrollHeaderVisibility } from '@/hooks/useScrollHeaderVisibility';
+import { ClientAuthProvider } from '@/contexts/ClientAuthContext';
+import { CatalogClientsProvider, useCatalogClients } from '@/contexts/CatalogClientsContext';
+import { OrdersProvider } from '@/contexts/OrdersContext';
+import { CartProvider } from '@/contexts/CartContext';
+import { Login } from '@/app/components/Login';
+import { Header } from '@/app/components/Header';
+import { BottomNav } from '@/app/components/BottomNav';
+import { Dashboard } from '@/app/components/Dashboard';
+import { Catalog } from '@/app/components/Catalog';
+import { ProductDetail } from '@/app/components/ProductDetail';
+import { Clients } from '@/app/components/Clients';
+import { Orders } from '@/app/components/Orders';
+import { Commissions } from '@/app/components/Commissions';
+import { ClientOrderView } from '@/app/components/ClientOrderView';
+import { ClientCatalogView } from '@/app/components/ClientCatalogView';
+import { Notifications } from '@/app/components/Notifications';
+import { Importers } from '@/app/components/Importers';
+import { Representatives } from '@/app/components/Representatives';
+import { SetPassword } from '@/app/components/SetPassword';
+import { Transportadoras } from '@/app/components/Transportadoras';
+import { Product } from '@/types';
+import { Sidebar } from '@/app/components/Sidebar';
+import { MoreMenu } from '@/app/components/MoreMenu';
+import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
+
+function parseCatalogRoute(pathname: string): { linkId: string; representanteId: string } {
+  const prefix = '/catalogo/';
+  if (!pathname.startsWith(prefix)) {
+    return { linkId: '', representanteId: 'rep-1' };
+  }
+  const raw = pathname.slice(prefix.length).replace(/\/+$/, '');
+  const first = raw.split('/')[0] ?? '';
+  if (CATALOG_PATH_UUID_RE.test(first)) {
+    return { representanteId: first, linkId: raw || first };
+  }
+  return { representanteId: 'rep-1', linkId: raw || 'legacy' };
+}
+
+function ClientCatalogEntry({ linkId, representanteId }: { linkId: string; representanteId: string }) {
+  const { addCliente } = useCatalogClients();
+  return (
+    <ClientAuthProvider onClientRegistered={addCliente}>
+      <ClientCatalogView linkId={linkId} representanteId={representanteId} />
+      <Toaster position="top-center" />
+    </ClientAuthProvider>
+  );
+}
+
+const VIEW_MODE_KEY = 'importaflow_view_mode';
+
+function AppContent() {
+  const { isAuthenticated, user, loading: authLoading } = useAuth();
+  const { unreadCount } = useNotifications();
+  const [activeTab, setActiveTab] = useState('home');
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [viewMode, setViewMode] = useState<'admin' | 'representante'>(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      return saved === 'representante' || saved === 'admin' ? saved : 'admin';
+    } catch {
+      return 'admin';
+    }
+  });
+
+  const isAdmin = user?.role === 'admin' || user?.role === 'backoffice';
+  const displayAsAdmin = isAdmin && viewMode === 'admin';
+  const isCatalogTab = activeTab === 'catalog';
+  const mainHeaderVisible = useScrollHeaderVisibility(isCatalogTab);
+  const mainHeaderRef = useRef<HTMLElement>(null);
+  const [mainHeaderHeight, setMainHeaderHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = mainHeaderRef.current;
+    if (!el) return;
+
+    const updateHeight = () => setMainHeaderHeight(el.getBoundingClientRect().height);
+    updateHeight();
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [viewMode, displayAsAdmin, user?.name, isCatalogTab]);
+
+  const handleViewModeChange = (mode: 'admin' | 'representante') => {
+    setViewMode(mode);
+    setActiveTab('home');
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Check if accessing via client catalog link
+  const isClientCatalogView = window.location.pathname.startsWith('/catalogo/');
+  const catalogPath = isClientCatalogView ? window.location.pathname.split('/catalogo/')[1] : null;
+
+  // Check if accessing via client order link
+  const isClientOrderView = window.location.pathname.startsWith('/pedido/');
+  const orderLinkId = isClientOrderView ? window.location.pathname.split('/pedido/')[1] : null;
+
+  if (isClientCatalogView && catalogPath) {
+    const { linkId, representanteId } = parseCatalogRoute(window.location.pathname);
+    return <ClientCatalogEntry linkId={linkId} representanteId={representanteId} />;
+  }
+
+  if (isClientOrderView && orderLinkId) {
+    return (
+      <>
+        <ClientOrderView linkId={orderLinkId} />
+        <Toaster position="top-center" />
+      </>
+    );
+  }
+
+  const normalizedPath =
+    window.location.pathname.replace(/\/+$/, '') || '/';
+
+  // Convite por e-mail: Supabase redireciona com ?code= na raiz se redirect antigo; leva para criar senha.
+  if (
+    normalizedPath === '/' &&
+    typeof window !== 'undefined' &&
+    (window.location.search.includes('code=') ||
+      window.location.hash.includes('access_token') ||
+      window.location.hash.includes('type=invite') ||
+      window.location.hash.includes('type=recovery'))
+  ) {
+    const tail = `${window.location.search}${window.location.hash}`;
+    window.location.replace(`/definir-senha${tail}`);
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted">
+        <p className="text-muted-foreground">Redirecionando…</p>
+      </div>
+    );
+  }
+
+  if (normalizedPath === '/definir-senha') {
+    return (
+      <>
+        <SetPassword />
+        <Toaster position="top-center" />
+      </>
+    );
+  }
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted">
+        <p className="text-muted-foreground">Carregando...</p>
+      </div>
+    );
+  }
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
+  const getMoreMenuItems = () => {
+    if (displayAsAdmin) {
+      return [];
+    }
+
+    // Itens extras do menu inferior para representante (Clientes e Transportadoras).
+    return [
+      { id: 'clients', label: 'Clientes' },
+      { id: 'transportadoras', label: 'Transportadoras' },
+    ];
+  };
+
+  const renderContent = () => {
+    if (activeTab === 'more' && !displayAsAdmin) {
+      return (
+        <MoreMenu
+          items={getMoreMenuItems()}
+          onSelect={(tabId) => setActiveTab(tabId)}
+        />
+      );
+    }
+
+    if (displayAsAdmin) {
+      switch (activeTab) {
+        case 'home':
+          return <Dashboard onNavigate={setActiveTab} mode="admin" />;
+        case 'importers':
+          return <Importers />;
+        case 'representatives':
+          return <Representatives />;
+        default:
+          return <Dashboard onNavigate={setActiveTab} mode="admin" />;
+      }
+    }
+
+    switch (activeTab) {
+      case 'home':
+        return <Dashboard onNavigate={setActiveTab} mode="representante" />;
+      case 'catalog':
+        return (
+          <Catalog
+            onProductSelect={setSelectedProduct}
+            mainHeaderVisible={mainHeaderVisible}
+            mainHeaderHeight={mainHeaderHeight}
+          />
+        );
+      case 'clients':
+        return <Clients />;
+      case 'orders':
+        return <Orders />;
+      case 'commissions':
+        return <Commissions />;
+      case 'transportadoras':
+        return <Transportadoras />;
+      default:
+        return <Dashboard onNavigate={setActiveTab} mode="representante" />;
+    }
+  };
+
+  const getPageTitle = () => {
+    if (activeTab === 'more' && !displayAsAdmin) {
+      return 'Mais opções';
+    }
+
+    if (displayAsAdmin) {
+      switch (activeTab) {
+        case 'home':
+          return 'Dashboard';
+        case 'importers':
+          return 'Importadoras';
+        case 'representatives':
+          return 'Representantes';
+        default:
+          return 'Dashboard';
+      }
+    }
+    switch (activeTab) {
+      case 'home':
+        return 'Dashboard';
+      case 'catalog':
+        return 'Catálogo';
+      case 'clients':
+        return 'Clientes';
+      case 'orders':
+        return 'Pedidos';
+      case 'commissions':
+        return 'Comissões';
+      case 'transportadoras':
+        return 'Transportadoras';
+      default:
+        return 'Dashboard';
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header
+        ref={mainHeaderRef}
+        title={getPageTitle()}
+        visible={mainHeaderVisible}
+        onNotificationsClick={() => setShowNotifications(true)}
+        unreadNotifications={unreadCount}
+        showNotificationsButton={!displayAsAdmin}
+        viewMode={isAdmin ? viewMode : undefined}
+        onViewModeChange={isAdmin ? handleViewModeChange : undefined}
+      />
+
+      <div className="flex">
+        {user && (
+          <Sidebar
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            userRole={displayAsAdmin ? 'admin' : 'representante'}
+          />
+        )}
+
+        <main className="flex-1 max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6 w-full">
+          {renderContent()}
+        </main>
+      </div>
+
+      {user && (
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          userRole={displayAsAdmin ? 'admin' : 'representante'}
+        />
+      )}
+
+      <ProductDetail
+        product={selectedProduct}
+        onClose={() => setSelectedProduct(null)}
+      />
+
+      <Notifications
+        open={showNotifications}
+        onClose={() => setShowNotifications(false)}
+      />
+
+      <Toaster position="top-center" />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <OrdersProvider>
+        <CatalogClientsProvider>
+          <CartProvider>
+            <AppContent />
+          </CartProvider>
+        </CatalogClientsProvider>
+      </OrdersProvider>
+    </AuthProvider>
+  );
+}

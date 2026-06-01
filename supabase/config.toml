@@ -1,0 +1,6 @@
+# Ver também: https://supabase.com/docs/guides/functions
+[functions.invite-representative]
+verify_jwt = true
+
+[functions.extract-catalog-page]
+verify_jwt = true

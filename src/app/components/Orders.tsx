@@ -1,0 +1,1158 @@
+import React, { useState, useEffect } from 'react';
+import { ShoppingBag, ArrowLeft, Package, DollarSign, TrendingUp, Calendar, Building, User, Download, Bell, Eye, Search, Upload, FileText, X, CheckCircle, Truck } from 'lucide-react';
+import { Button } from '@/app/components/ui/button';
+import { Input } from '@/app/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Badge } from '@/app/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import { useOrders } from '@/contexts/OrdersContext';
+import { useTransportadoras } from '@/hooks/useData';
+import { toast } from 'sonner';
+import { Order, OrderStatus } from '@/types';
+import {
+  formatPriceBRL,
+  getBoxPrice,
+  getCartLineTotal,
+  getUnitPrice,
+} from '@/lib/productPricing';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/app/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
+import { ImageWithFallback } from '@/app/components/ui/image';
+
+type ViewMode = 'list' | 'detail';
+type FilterType = 'all' | 'unread' | 'cliente' | 'representante';
+
+export const Orders: React.FC = () => {
+  const { orders, loading, updateOrder, refetch } = useOrders();
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+  const { transportadoras } = useTransportadoras();
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState<FilterType>('all');
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all');
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [importSuccess, setImportSuccess] = useState(false);
+  const [showNotaFiscalDialog, setShowNotaFiscalDialog] = useState(false);
+  const [notaFiscalNumber, setNotaFiscalNumber] = useState('');
+  const [pendingStatusChange, setPendingStatusChange] = useState<{orderId: string, status: string} | null>(null);
+
+  // Filtrar pedidos
+  const filteredOrders = orders.filter(order => {
+    // Filtro de busca
+    const matchesSearch = 
+      order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.clienteName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.importadoraName.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Filtro de tipo
+    let matchesType = true;
+    if (filterType === 'unread') matchesType = !order.isRead;
+    else if (filterType === 'cliente') matchesType = order.origin === 'cliente';
+    else if (filterType === 'representante') matchesType = order.origin === 'representante';
+
+    // Filtro de status
+    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
+
+    return matchesSearch && matchesType && matchesStatus;
+  });
+
+  // Contar pedidos não lidos
+  const unreadCount = orders.filter(order => !order.isRead).length;
+
+  const getOrderStatusBadge = (status: string) => {
+    const statusConfig = {
+      rascunho: { label: 'Rascunho', className: 'bg-gray-500' },
+      aberto: { label: 'Em Aberto', className: 'bg-blue-500' },
+      faturado: { label: 'Faturado', className: 'bg-green-500' },
+      cancelado: { label: 'Cancelado', className: 'bg-red-500' },
+    };
+    
+    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.rascunho;
+    return <Badge className={config.className}>{config.label}</Badge>;
+  };
+
+  const getOriginBadge = (origin: string) => {
+    if (origin === 'cliente') {
+      return <Badge variant="outline" className="border-secondary text-secondary">Enviado por Cliente</Badge>;
+    }
+    return <Badge variant="outline" className="border-primary text-primary">Criado por Mim</Badge>;
+  };
+
+  const handleOpenOrder = (order: Order) => {
+    setSelectedOrder(order);
+    setViewMode('detail');
+    
+    if (!order.isRead) {
+      updateOrder(order.id, { isRead: true }).then(() => {
+        setSelectedOrder(prev => prev ? { ...prev, isRead: true } : null);
+        toast.success('Pedido visualizado');
+      });
+    }
+  };
+
+  const handleStatusChange = (orderId: string, newStatus: string) => {
+    if (newStatus === 'faturado') {
+      setPendingStatusChange({ orderId, status: newStatus });
+      setShowNotaFiscalDialog(true);
+    } else {
+      updateOrder(orderId, { status: newStatus as OrderStatus }).then(() => {
+        if (selectedOrder?.id === orderId) {
+          setSelectedOrder({ ...selectedOrder, status: newStatus as OrderStatus });
+        }
+        toast.success(`Status do pedido alterado para ${newStatus === 'aberto' ? 'Em Aberto' : 'Cancelado'}`);
+      });
+    }
+  };
+
+  const handleConfirmNotaFiscal = () => {
+    if (!notaFiscalNumber.trim()) {
+      toast.error('Por favor, informe o número da nota fiscal');
+      return;
+    }
+
+    if (pendingStatusChange && selectedOrder) {
+      updateOrder(selectedOrder.id, { status: 'faturado', notaFiscal: notaFiscalNumber }).then(() => {
+        setSelectedOrder(prev => prev ? { ...prev, status: 'faturado', notaFiscal: notaFiscalNumber } : null);
+        setShowNotaFiscalDialog(false);
+        setNotaFiscalNumber('');
+        setPendingStatusChange(null);
+        toast.success(`Pedido faturado com sucesso! Nota Fiscal: ${notaFiscalNumber}`);
+      });
+    }
+  };
+
+  const exportOrderToCSV = (order: Order) => {
+    // Criar CSV no formato do pedido profissional
+    const hoje = new Date();
+    const dataFormatada = hoje.toLocaleDateString('pt-BR');
+    const horaFormatada = hoje.toLocaleTimeString('pt-BR');
+    
+    let csvContent = '';
+    
+    // Cabeçalho
+    csvContent += `${order.importadoraName}\n`;
+    csvContent += `Data: ${dataFormatada},,,,,,,Pedido Nro. ${order.id}\n`;
+    csvContent += `Hora: ${horaFormatada},,,,,,,Nota Nro.: ${order.notaFiscal || ''}\n`;
+    csvContent += `\n`;
+    
+    // Informações do Cliente
+    csvContent += `Cliente:,${order.clienteName || 'Não informado'},,,,Data Emissão:,${order.createdAt.toLocaleDateString('pt-BR')}\n`;
+    csvContent += `Endereço:,,,,,Data Saída:,${order.updatedAt?.toLocaleDateString('pt-BR') || ''}\n`;
+    csvContent += `Bairro:,,,,,UF:,CEP:,\n`;
+    csvContent += `CNPJ/CPF:,,,Inscr. Est.:,\n`;
+    csvContent += `Fone:,,,Forma Pagto.:,${order.paymentTerm || ''}\n`;
+    csvContent += `Contato:,,,Fax.:,\n`;
+    csvContent += `E-Mail:,\n`;
+    csvContent += `\n`;
+    
+    // Cabeçalho da tabela de produtos
+    csvContent += `Referência,Foto,NCM,Cod. Barra,Descrição,Cxs,Vlr/Uni,Vlr/Cx,Vlr Total,ST,IPI%,IPI\n`;
+    
+    // Produtos
+    let totalCaixas = 0;
+    let totalIPI = 0;
+    
+    order.items.forEach((item) => {
+      const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));
+      const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));
+      const lineTotal = getCartLineTotal(item);
+      const vlrTotal = formatPriceBRL(lineTotal);
+      const ipiPercentual = '6,50';
+      const ipiValor = formatPriceBRL(lineTotal * 0.065);
+      
+      totalCaixas += item.quantity;
+      totalIPI += parseFloat(ipiValor);
+      
+      csvContent += `${item.product.code},,,,${item.product.name},${item.quantity},${vlrUnitario},${vlrCaixa},${vlrTotal},0.00,${ipiPercentual},${ipiValor}\n`;
+    });
+    
+    csvContent += `\n`;
+    
+    // Totais
+    csvContent += `,,,,,VL Total:,${order.total.toFixed(2)}\n`;
+    csvContent += `,,,,,Total ST:,0.00\n`;
+    csvContent += `,,,,,Total IPI:,${totalIPI.toFixed(2)}\n`;
+    csvContent += `\n`;
+    
+    // Informações finais
+    csvContent += `Total de Caixas:,${totalCaixas}\n`;
+    csvContent += `Total de Cubagem:,\n`;
+    csvContent += `Vendedor:,${order.representanteName}\n`;
+    csvContent += `Vendedor Ext.:,\n`;
+    csvContent += `Frete:,\n`;
+    const transportadora = order.transportadoraId ? transportadoras.find(t => t.id === order.transportadoraId) : null;
+    csvContent += `Transportadora:,${transportadora?.name || ''}\n`;
+    csvContent += `Fone:,${transportadora?.phone || ''}\n`;
+    csvContent += `Total Peso Líquido:,\n`;
+    csvContent += `Total Peso Bruto:,\n`;
+    csvContent += `Observação:,${order.notes || ''}\n`;
+
+    // Download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `pedido_${order.id}_${order.importadoraName.replace(/\s+/g, '_')}_${dataFormatada.replace(/\//g, '-')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.success('Pedido exportado para CSV com sucesso!');
+  };
+
+  const exportOrderToPDF = (order: Order) => {
+    // Criar conteúdo HTML para o PDF
+    const hoje = new Date();
+    const dataFormatada = hoje.toLocaleDateString('pt-BR');
+    const horaFormatada = hoje.toLocaleTimeString('pt-BR');
+    
+    let totalCaixas = 0;
+    let totalIPI = 0;
+    
+    order.items.forEach((item) => {
+      totalCaixas += item.quantity;
+      totalIPI += getCartLineTotal(item) * 0.065;
+    });
+
+    const transportadora = order.transportadoraId ? transportadoras.find(t => t.id === order.transportadoraId) : null;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Pedido ${order.id}</title>
+        <style>
+          @page { margin: 20mm; }
+          body { 
+            font-family: Arial, sans-serif; 
+            font-size: 11px;
+            color: #000;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #5B3DF5;
+            padding-bottom: 10px;
+          }
+          .header h1 {
+            color: #5B3DF5;
+            margin: 0;
+            font-size: 20px;
+          }
+          .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+          }
+          .info-item {
+            margin-bottom: 8px;
+          }
+          .info-label {
+            font-weight: bold;
+            color: #555;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+          }
+          th {
+            background: #5B3DF5;
+            color: white;
+            padding: 10px 8px;
+            text-align: left;
+            font-size: 10px;
+          }
+          td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            font-size: 10px;
+          }
+          tr:nth-child(even) {
+            background: #f9f9f9;
+          }
+          .totals {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+          }
+          .total-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+          }
+          .total-row.main {
+            font-size: 16px;
+            font-weight: bold;
+            color: #5B3DF5;
+            padding-top: 10px;
+            border-top: 2px solid #5B3DF5;
+          }
+          .footer {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+            font-size: 10px;
+            color: #666;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${order.importadoraName}</h1>
+          <p>Pedido Nº ${order.id} | Data: ${dataFormatada} ${horaFormatada}</p>
+        </div>
+
+        <div class="info-grid">
+          <div>
+            <div class="info-item">
+              <span class="info-label">Cliente:</span> ${order.clienteName || 'Não informado'}
+            </div>
+            <div class="info-item">
+              <span class="info-label">Representante:</span> ${order.representanteName}
+            </div>
+            <div class="info-item">
+              <span class="info-label">Data de Criação:</span> ${order.createdAt.toLocaleDateString('pt-BR')}
+            </div>
+            <div class="info-item">
+              <span class="info-label">Status:</span> ${order.status === 'faturado' ? 'Faturado' : order.status === 'aberto' ? 'Em Aberto' : 'Cancelado'}
+            </div>
+          </div>
+          <div>
+            <div class="info-item">
+              <span class="info-label">Prazo de Pagamento:</span> ${order.paymentTerm || 'Não informado'}
+            </div>
+            <div class="info-item">
+              <span class="info-label">Transportadora:</span> ${transportadora?.name || 'Não informada'}
+            </div>
+            ${transportadora ? `
+            <div class="info-item">
+              <span class="info-label">Telefone Transportadora:</span> ${transportadora.phone}
+            </div>
+            <div class="info-item">
+              <span class="info-label">Local:</span> ${transportadora.city} - ${transportadora.state}
+            </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Descrição</th>
+              <th style="text-align: center;">Cxs</th>
+              <th style="text-align: right;">Vlr/Uni</th>
+              <th style="text-align: right;">Vlr/Cx</th>
+              <th style="text-align: right;">Vlr Total</th>
+              <th style="text-align: center;">IPI %</th>
+              <th style="text-align: right;">IPI</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${order.items.map(item => {
+              const vlrUnitario = formatPriceBRL(getUnitPrice(item.product));
+              const vlrCaixa = formatPriceBRL(getBoxPrice(item.product));
+              const lineTotal = getCartLineTotal(item);
+              const vlrTotal = formatPriceBRL(lineTotal);
+              const ipiValor = formatPriceBRL(lineTotal * 0.065);
+              return `
+                <tr>
+                  <td>${item.product.code}</td>
+                  <td>${item.product.name}</td>
+                  <td style="text-align: center;">${item.quantity}</td>
+                  <td style="text-align: right;">R$ ${vlrUnitario}</td>
+                  <td style="text-align: right;">R$ ${vlrCaixa}</td>
+                  <td style="text-align: right;">R$ ${vlrTotal}</td>
+                  <td style="text-align: center;">6,50%</td>
+                  <td style="text-align: right;">R$ ${ipiValor}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+
+        <div class="totals">
+          <div class="total-row">
+            <span>Total de Caixas:</span>
+            <span>${totalCaixas}</span>
+          </div>
+          <div class="total-row">
+            <span>Subtotal:</span>
+            <span>R$ ${order.total.toFixed(2)}</span>
+          </div>
+          <div class="total-row">
+            <span>Total IPI:</span>
+            <span>R$ ${totalIPI.toFixed(2)}</span>
+          </div>
+          <div class="total-row main">
+            <span>TOTAL DO PEDIDO:</span>
+            <span>R$ ${order.total.toFixed(2)}</span>
+          </div>
+        </div>
+
+        ${order.notes ? `
+        <div class="footer">
+          <div class="info-label">Observações:</div>
+          <p>${order.notes}</p>
+        </div>
+        ` : ''}
+
+        <div class="footer" style="margin-top: 40px; text-align: center;">
+          <p>Documento gerado em ${dataFormatada} às ${horaFormatada}</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Criar blob e fazer download
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `pedido_${order.id}_${order.importadoraName.replace(/\s+/g, '_')}_${dataFormatada.replace(/\//g, '-')}.html`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Abrir em nova janela para impressão/salvar como PDF
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    }
+
+    toast.success('Pedido exportado para PDF com sucesso!');
+  };
+
+  const handleExportOrder = (order: Order, format: string) => {
+    if (format === 'csv') {
+      exportOrderToCSV(order);
+    } else if (format === 'pdf') {
+      exportOrderToPDF(order);
+    }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type === 'application/pdf') {
+      setSelectedFile(file);
+      setImportSuccess(false);
+    } else {
+      toast.error('Por favor, selecione um arquivo PDF válido');
+    }
+  };
+
+  const handleImportPDF = async () => {
+    if (!selectedFile) {
+      toast.error('Selecione um arquivo PDF para importar');
+      return;
+    }
+
+    setIsProcessing(true);
+
+    // Simular processamento do PDF (2 segundos)
+    setTimeout(() => {
+      // Em produção, aqui seria feita a chamada ao backend para processar o PDF
+      // Por ora, vamos criar um pedido mockado
+      
+      const newOrderId = `PED${Math.floor(Math.random() * 100000)}`;
+      
+      toast.success(`Pedido #${newOrderId} importado com sucesso!`, {
+        description: '3 produtos foram adicionados ao pedido',
+      });
+
+      setIsProcessing(false);
+      setImportSuccess(true);
+
+      // Fechar o dialog após 2 segundos
+      setTimeout(() => {
+        setShowImportDialog(false);
+        setSelectedFile(null);
+        setImportSuccess(false);
+      }, 2000);
+    }, 2000);
+  };
+
+  const handleCloseImportDialog = () => {
+    if (!isProcessing) {
+      setShowImportDialog(false);
+      setSelectedFile(null);
+      setImportSuccess(false);
+    }
+  };
+
+  return (
+    <div className="min-w-0 space-y-5 overflow-x-hidden pb-2">
+      {viewMode === 'list' && (
+        <>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-semibold sm:text-2xl">Meus Pedidos</h2>
+                {unreadCount > 0 && (
+                  <Badge className="bg-red-500">
+                    {unreadCount} {unreadCount === 1 ? 'novo' : 'novos'}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Gerencie todos os seus pedidos em um só lugar
+              </p>
+            </div>
+
+            <Button
+              onClick={() => setShowImportDialog(true)}
+              className="w-full shrink-0 bg-secondary hover:bg-secondary/90 sm:w-auto"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              <span className="sm:hidden">Importar PDF</span>
+              <span className="hidden sm:inline">Importar Pedido (PDF)</span>
+            </Button>
+          </div>
+
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por pedido, cliente ou importadora..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+              <Button
+                variant={filterType === 'all' ? 'default' : 'outline'}
+                onClick={() => setFilterType('all')}
+                size="sm"
+                className="shrink-0"
+              >
+                Todos
+              </Button>
+              <Button
+                variant={filterType === 'unread' ? 'default' : 'outline'}
+                onClick={() => setFilterType('unread')}
+                size="sm"
+                className={`shrink-0 ${filterType === 'unread' ? '' : 'border-red-500/30 text-red-500 hover:bg-red-500/10'}`}
+              >
+                <Bell className="mr-1.5 h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">Não lidos ({unreadCount})</span>
+              </Button>
+              <Button
+                variant={filterType === 'cliente' ? 'default' : 'outline'}
+                onClick={() => setFilterType('cliente')}
+                size="sm"
+                className="shrink-0"
+              >
+                <User className="mr-1.5 h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">Clientes</span>
+              </Button>
+              <Button
+                variant={filterType === 'representante' ? 'default' : 'outline'}
+                onClick={() => setFilterType('representante')}
+                size="sm"
+                className="shrink-0 whitespace-nowrap"
+              >
+                Meus pedidos
+              </Button>
+            </div>
+
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as OrderStatus | 'all')}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os Status</SelectItem>
+                <SelectItem value="aberto">Em Aberto</SelectItem>
+                <SelectItem value="faturado">Faturado</SelectItem>
+                <SelectItem value="cancelado">Cancelado</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Orders List */}
+          <div className="space-y-3">
+            {filteredOrders
+              .sort((a, b) => {
+                // Não lidos primeiro
+                if (!a.isRead && b.isRead) return -1;
+                if (a.isRead && !b.isRead) return 1;
+                // Depois por data
+                return b.createdAt.getTime() - a.createdAt.getTime();
+              })
+              .map(order => (
+              <Card 
+                key={order.id} 
+                className={`hover:shadow-md transition-shadow cursor-pointer ${!order.isRead ? 'border-2 border-primary/50 bg-primary/5' : ''}`}
+                onClick={() => handleOpenOrder(order)}
+              >
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <h4 className="break-all font-semibold leading-tight">
+                          Pedido #{order.id}
+                        </h4>
+                        {!order.isRead && (
+                          <Badge className="shrink-0 bg-red-500">
+                            <Bell className="mr-1 h-3 w-3" />
+                            Novo
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {getOriginBadge(order.origin)}
+                        {getOrderStatusBadge(order.status)}
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 text-sm text-muted-foreground sm:grid-cols-3">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <Building className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate text-xs">{order.importadoraName}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs whitespace-nowrap">
+                            {order.createdAt.toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 sm:col-span-1">
+                          <Package className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs">
+                            {order.items.length} {order.items.length === 1 ? 'produto' : 'produtos'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {order.clienteName && (
+                        <div className="flex min-w-0 items-center gap-2 rounded-md bg-muted/50 px-2.5 py-2">
+                          <User className="h-4 w-4 shrink-0 text-secondary" />
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {order.clienteName}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
+                      <p className="text-xs text-muted-foreground sm:hidden">Valor total</p>
+                      <div className="text-right">
+                        <p className="mb-0.5 hidden text-xs text-muted-foreground sm:block">Valor Total</p>
+                        <p className="text-xl font-bold text-primary sm:text-2xl">
+                          R$ {order.total.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {filteredOrders.length === 0 && (
+            <div className="text-center py-12">
+              <ShoppingBag className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">Nenhum pedido encontrado</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {viewMode === 'detail' && selectedOrder && (
+        <>
+          {/* Header with Back Button */}
+          <div className="mb-6 space-y-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('list')}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Voltar
+            </Button>
+            
+            <div className="space-y-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 pr-2">
+                <h2 className="break-all text-xl font-semibold leading-tight sm:text-2xl">
+                  Pedido #{selectedOrder.id}
+                </h2>
+                {!selectedOrder.isRead && (
+                  <Badge className="shrink-0 bg-red-500">
+                    <Eye className="mr-1 h-3 w-3" />
+                    Acabou de visualizar
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {getOriginBadge(selectedOrder.origin)}
+                  {getOrderStatusBadge(selectedOrder.status)}
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 border-secondary/40 text-secondary hover:bg-secondary/10"
+                      aria-label="Exportar pedido"
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="z-[100]">
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'csv')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleExportOrder(selectedOrder, 'pdf')}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Exportar PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4 mb-6">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-primary/10">
+                    <DollarSign className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Valor Total</p>
+                    <p className="text-xl font-bold text-primary">
+                      R$ {selectedOrder.total.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-secondary/10">
+                    <Package className="w-5 h-5 text-secondary" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total de Itens</p>
+                    <p className="text-xl font-bold">
+                      {selectedOrder.items.reduce((sum, item) => sum + item.quantity, 0)}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-green-500/10">
+                    <TrendingUp className="w-5 h-5 text-green-500" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Comissão Estimada</p>
+                    <p className="text-xl font-bold text-green-500">
+                      R$ {(selectedOrder.total * 0.10).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Order Info */}
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle className="text-base">Informações do Pedido</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Importadora</p>
+                  <p className="text-sm font-medium">{selectedOrder.importadoraName}</p>
+                </div>
+                {selectedOrder.clienteName && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Cliente</p>
+                    <p className="text-sm font-medium">{selectedOrder.clienteName}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Data de Criação</p>
+                  <p className="text-sm">
+                    {selectedOrder.createdAt.toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Alterar Status do Pedido</p>
+                  <Select
+                    value={selectedOrder.status}
+                    onValueChange={(value) => handleStatusChange(selectedOrder.id, value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecione o status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="aberto">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-blue-500" />
+                          Em Aberto
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="faturado">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-green-500" />
+                          Faturado
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="cancelado">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-red-500" />
+                          Cancelado
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Prazo de Pagamento */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Prazo de Pagamento</p>
+                  <Input
+                    placeholder="Ex: 30 dias, 60 dias, À vista..."
+                    value={selectedOrder.paymentTerm || ''}
+                    onChange={(e) => {
+                      // Em produção, aqui atualizaria o pedido no backend
+                      setSelectedOrder({ ...selectedOrder, paymentTerm: e.target.value });
+                      toast.success('Prazo de pagamento atualizado');
+                    }}
+                  />
+                </div>
+
+                {/* Transportadora */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Transportadora</p>
+                  <Select
+                    value={selectedOrder.transportadoraId || 'none'}
+                    onValueChange={(value) => {
+                      if (!selectedOrder) return;
+                      const transportadoraId = value === 'none' ? undefined : value;
+                      updateOrder(selectedOrder.id, { transportadoraId }).then(() => {
+                        setSelectedOrder({ ...selectedOrder, transportadoraId });
+                        if (value === 'none') toast.success('Transportadora removida');
+                        else {
+                          const t = transportadoras.find(x => x.id === value);
+                          toast.success(`Transportadora ${t?.name} selecionada`);
+                        }
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecione a transportadora">
+                        {selectedOrder.transportadoraId ? (
+                          <div className="flex items-center gap-2">
+                            <Truck className="w-4 h-4" />
+                            {transportadoras.find(t => t.id === selectedOrder.transportadoraId)?.name}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">Nenhuma selecionada</span>
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">
+                        <span className="text-muted-foreground">Nenhuma selecionada</span>
+                      </SelectItem>
+                      {transportadoras.map((transportadora) => (
+                        <SelectItem key={transportadora.id} value={transportadora.id}>
+                          <div className="flex items-center gap-2">
+                            <Truck className="w-4 h-4" />
+                            <div>
+                              <p className="font-medium">{transportadora.name}</p>
+                              <p className="text-xs text-muted-foreground">{transportadora.city} - {transportadora.state}</p>
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Nota Fiscal - Mostrar se pedido estiver faturado */}
+                {selectedOrder.status === 'faturado' && selectedOrder.notaFiscal && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Nota Fiscal</p>
+                    <div className="flex items-center gap-2 p-2 bg-green-500/10 border border-green-500/30 rounded-lg">
+                      <FileText className="w-4 h-4 text-green-500" />
+                      <p className="text-sm font-medium text-green-600">{selectedOrder.notaFiscal}</p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedOrder.notes && (
+                  <div className="md:col-span-2">
+                    <p className="text-xs text-muted-foreground mb-1">Observações</p>
+                    <p className="text-sm">{selectedOrder.notes}</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Order Items */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Produtos do Pedido</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Cabeçalho da Importadora */}
+                <div className="flex items-center gap-2 pb-2 border-b-2 border-primary/20">
+                  <Building className="w-5 h-5 text-primary" />
+                  <h4 className="text-lg font-semibold text-primary">{selectedOrder.importadoraName}</h4>
+                </div>
+
+                {/* Lista de Produtos */}
+                <div className="space-y-2">
+                  {selectedOrder.items.map((item, index) => (
+                    <div
+                      key={index}
+                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
+                    >
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted sm:h-16 sm:w-16">
+                          {item.product.image ? (
+                            <ImageWithFallback
+                              src={item.product.image}
+                              alt={item.product.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <Package className="h-7 w-7 text-muted-foreground sm:h-8 sm:w-8" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="mb-1 line-clamp-2 font-medium leading-snug">{item.product.name}</p>
+                          <p className="text-xs text-muted-foreground">Código: {item.product.code}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:flex-col sm:items-end sm:border-0 sm:pt-0">
+                        <div className="text-sm text-muted-foreground">
+                          <p>
+                            R$ {formatPriceBRL(getUnitPrice(item.product))}/un · R${' '}
+                            {formatPriceBRL(getBoxPrice(item.product))}/cx
+                          </p>
+                          <p>{item.quantity} cx</p>
+                        </div>
+                        <p className="text-lg font-bold text-primary sm:text-base">
+                          R$ {formatPriceBRL(getCartLineTotal(item))}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Total do Pedido */}
+                <div className="pt-4 border-t-2 border-primary/30">
+                  <div className="flex items-center justify-between text-lg font-bold">
+                    <span>Total do Pedido</span>
+                    <span className="text-primary">R$ {selectedOrder.total.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* Import PDF Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={handleCloseImportDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Importar Pedido via PDF</DialogTitle>
+            <DialogDescription>
+              Envie um PDF de pedido para importar automaticamente os produtos e dados
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {!importSuccess ? (
+              <>
+                {/* Upload Area */}
+                <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors">
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileSelect}
+                    disabled={isProcessing}
+                    className="hidden"
+                    id="pdf-upload"
+                  />
+                  <label htmlFor="pdf-upload" className="cursor-pointer">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="p-3 rounded-full bg-primary/10">
+                        <FileText className="w-8 h-8 text-primary" />
+                      </div>
+                      <div>
+                        <p className="font-medium mb-1">
+                          Clique para selecionar um PDF
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Ou arraste e solte aqui
+                        </p>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Selected File */}
+                {selectedFile && (
+                  <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
+                    <FileText className="w-5 h-5 text-primary" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{selectedFile.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(selectedFile.size / 1024).toFixed(2)} KB
+                      </p>
+                    </div>
+                    {!isProcessing && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSelectedFile(null)}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={handleCloseImportDialog}
+                    disabled={isProcessing}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleImportPDF}
+                    disabled={!selectedFile || isProcessing}
+                    className="bg-primary"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        Processando...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" />
+                        Importar Pedido
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="flex justify-center mb-4">
+                  <div className="p-3 rounded-full bg-green-500/10">
+                    <CheckCircle className="w-12 h-12 text-green-500" />
+                  </div>
+                </div>
+                <h3 className="text-lg font-semibold mb-2">Pedido Importado!</h3>
+                <p className="text-sm text-muted-foreground">
+                  O pedido foi processado e adicionado à sua lista
+                </p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Nota Fiscal Dialog */}
+      <Dialog open={showNotaFiscalDialog} onOpenChange={() => setShowNotaFiscalDialog(false)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Confirmar Faturamento</DialogTitle>
+            <DialogDescription>
+              Informe o número da nota fiscal para confirmar o faturamento do pedido
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <Input
+              placeholder="Número da Nota Fiscal"
+              value={notaFiscalNumber}
+              onChange={(e) => setNotaFiscalNumber(e.target.value)}
+              className="w-full"
+            />
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setShowNotaFiscalDialog(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleConfirmNotaFiscal}
+                className="bg-primary"
+              >
+                Confirmar Faturamento
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};

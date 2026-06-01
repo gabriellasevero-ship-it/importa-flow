@@ -1,0 +1,99 @@
+import { createClient } from '@supabase/supabase-js';
+
+/** trim evita falhas no fetch quando o valor vem com espaço ou quebra de linha do painel da hospedagem */
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
+
+// Em modo desenvolvimento/demo, o projeto pode ser usado sem Supabase configurado.
+// Antes, chamávamos createClient com strings vazias, o que fazia a app quebrar
+// logo ao carregar (tela em branco). Aqui garantimos sempre uma URL "válida"
+// para evitar esse crash, mas continuamos marcando a configuração como ausente.
+const FALLBACK_SUPABASE_URL = 'https://example.supabase.co';
+const FALLBACK_SUPABASE_ANON_KEY = 'public-anon-key';
+
+const memoryStorage = new Map<string, string>();
+
+function getSafeStorage() {
+  const isBrowser = typeof window !== 'undefined';
+  if (!isBrowser) return undefined;
+
+  try {
+    const testKey = '__supabase_storage_test__';
+    window.localStorage.setItem(testKey, '1');
+    window.localStorage.removeItem(testKey);
+    return window.localStorage;
+  } catch {
+    // Safari (especialmente em navegação privada ou com políticas rígidas)
+    // pode bloquear localStorage e quebrar a persistência da sessão.
+    console.warn('Supabase: localStorage indisponível. Usando storage em memória para sessão.');
+    return {
+      getItem: (key: string) => memoryStorage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        memoryStorage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        memoryStorage.delete(key);
+      },
+    };
+  }
+}
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn(
+    'Supabase: URL ou Chave anônima não configurados. Crie um arquivo .env com VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para usar o backend real.'
+  );
+}
+
+export const supabase = createClient(
+  supabaseUrl || FALLBACK_SUPABASE_URL,
+  supabaseAnonKey || FALLBACK_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      storage: getSafeStorage(),
+      persistSession: true,
+      autoRefreshToken: true,
+      // Desligado em /definir-senha: validação só após clique (evita prefetch de e-mail consumir ?code=).
+      detectSessionInUrl: typeof window !== 'undefined' &&
+        !window.location.pathname.replace(/\/+$/, '').endsWith('/definir-senha'),
+      // Implícito: link de recuperação funciona ao abrir o e-mail em qualquer navegador.
+      // (PKCE exige o mesmo navegador em que "Esqueci minha senha" foi clicado.)
+      flowType: 'implicit',
+    },
+  }
+);
+
+export function isSupabaseConfigured(): boolean {
+  return !!(supabaseUrl && supabaseAnonKey);
+}
+
+/** Origem do projeto (sem barra final), para chamadas REST e Edge Functions. */
+export function getSupabaseProjectUrl(): string | null {
+  const raw = supabaseUrl?.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function getSupabaseAnonKey(): string | null {
+  return supabaseAnonKey?.trim() || null;
+}
+
+/** Garante que a sessão em memória/storage foi lida antes do 1º SELECT (evita JWT ausente no 1º request). */
+export async function syncAuthBeforeDbRead(): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  await supabase.auth.getSession();
+}
+
+/** Só para diagnóstico em console (ex.: login em produção); não expõe segredos */
+export function getConfiguredSupabaseHost(): string | null {
+  if (!supabaseUrl) return null;
+  try {
+    return new URL(supabaseUrl).host;
+  } catch {
+    return null;
+  }
+}

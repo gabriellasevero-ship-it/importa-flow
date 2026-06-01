@@ -1,0 +1,2359 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Building2, Save, Upload, X, Plus, Pencil, Trash2, FileText, Package, Eye, Search, ZoomIn, EyeOff, CreditCard, Users, TrendingUp, CheckCircle, AlertCircle, Loader2, ImageIcon, Settings } from 'lucide-react';
+import {
+  cropImageBlobRect,
+  cropImageBlobVertical,
+  equalVerticalCropFracs,
+  equalVerticalCropFracsInBand,
+  extractCatalogPagesForAi,
+  extractTextAndPageImages,
+} from '@/lib/pdfUtils';
+import { DEFAULT_CATEGORY, parseCatalogText } from '@/lib/catalogParser';
+import {
+  CatalogExtractionRateLimitError,
+  CatalogExtractionUnavailableError,
+  extractCatalogPage,
+  type ExtractedCatalogProduct,
+} from '@/services/catalogExtraction';
+import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
+import * as productsApi from '@/services/products';
+import { updateImportadora } from '@/services/importadoras';
+import { isSupabaseConfigured } from '@/lib/supabase';
+import { uploadCatalogPageImage, uploadProductPhoto } from '@/services/storage';
+import type { Product as ApiProduct } from '@/types';
+import { Button } from '@/app/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { Input } from '@/app/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/app/components/ui/dialog';
+import { Badge } from '@/app/components/ui/badge';
+import { toast } from 'sonner';
+import { Textarea } from '@/app/components/ui/textarea';
+import { Label } from '@/app/components/ui/label';
+import { ImageWithFallback } from '@/app/components/ui/image';
+import { Switch } from '@/app/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/app/components/ui/select';
+import { Checkbox } from '@/app/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
+
+const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+interface Product {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  price: number;
+  quantityPerBox: number;
+  material: string;
+  unitsPerPackage: number;
+  dimensions: string;
+  image?: string;
+  published: boolean;
+  outOfStock: boolean;
+  detalhe: string;
+  description: string;
+}
+
+interface Importer {
+  id: string;
+  name: string;
+  productsCount: number;
+  lastUpdate: string;
+  contactEmail: string;
+  contactPhone: string;
+  cnpj?: string;
+  /** Percentual (0–100) pago às representantes (padrão da importadora). */
+  representanteCommissionPct?: number;
+}
+
+interface ImporterDetailProps {
+  importer: Importer;
+  onBack: () => void;
+  onUpdate: (importer: Importer) => void;
+  onDelete?: (importerId: string) => void;
+}
+
+function apiProductToLocal(p: ApiProduct): Product {
+  return {
+    id: p.id,
+    code: p.code,
+    name: p.name,
+    category: p.category,
+    price: p.price,
+    quantityPerBox: p.minOrder,
+    material: p.material ?? '',
+    unitsPerPackage: 0,
+    dimensions: p.dimensions ?? '',
+    image: p.image,
+    published: p.active,
+    outOfStock: p.outOfStock ?? false,
+    detalhe: p.detalhe1 ?? '',
+    description: p.description ?? '',
+  };
+}
+
+export const ImporterDetail: React.FC<ImporterDetailProps> = ({
+  importer: initialImporter,
+  onBack,
+  onUpdate,
+  onDelete,
+}) => {
+  const [importer, setImporter] = useState(initialImporter);
+  const [savingImporterInfo, setSavingImporterInfo] = useState(false);
+  const { products: apiProducts, loading: productsLoading, refetch: refetchProducts } = useProducts({
+    importadoraId: importer.id,
+  });
+  const { representatives } = useRepresentatives();
+  const { categories: apiCategories } = useCategories();
+  const categoryNames = useMemo(() => apiCategories.map((c) => c.name), [apiCategories]);
+  const products = apiProducts.map(apiProductToLocal);
+  const linkedRepresentatives = representatives
+    .filter((r) => r.importerId === importer.id)
+    .map((r) => ({ id: r.id, name: r.name, email: r.email, status: r.status }));
+  const [activeTab, setActiveTab] = useState('products');
+  const [showProductDialog, setShowProductDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showCatalogUploadDialog, setShowCatalogUploadDialog] = useState(false);
+  const [showDeleteImporterDialog, setShowDeleteImporterDialog] = useState(false);
+  const [showImageZoomDialog, setShowImageZoomDialog] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  /** Quando ligado, produtos com código já cadastrado são atualizados em vez de ignorados. */
+  const [updateExistingProducts, setUpdateExistingProducts] = useState(false);
+  const [catalogProcessing, setCatalogProcessing] = useState(false);
+  const [catalogProgress, setCatalogProgress] = useState<{ currentPage: number; totalPages: number } | null>(null);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productSaving, setProductSaving] = useState(false);
+  const [productImageFile, setProductImageFile] = useState<File | null>(null);
+  const [productImagePreview, setProductImagePreview] = useState<string | null>(null);
+  const [productImageRemoved, setProductImageRemoved] = useState(false);
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleteMode, setBulkDeleteMode] = useState<'selected' | 'all' | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showProductDeleteOptions, setShowProductDeleteOptions] = useState(false);
+
+  // Estados Financeiros (novas importadoras vêm com plano free e pagamento em dia)
+  const [financialData, setFinancialData] = useState({
+    plan: 'free' as 'free' | 'basic' | 'pro',
+    maxRepresentatives: '3',
+    maxProcessesPerMonth: '20',
+    paymentStatus: 'paid' as 'paid' | 'overdue',
+  });
+
+  const [formData, setFormData] = useState({
+    name: importer.name,
+    cnpj: importer.cnpj || '',
+    representanteCommissionPct: String(importer.representanteCommissionPct ?? 0),
+    contactEmail: importer.contactEmail,
+    contactPhone: importer.contactPhone,
+  });
+
+  useEffect(() => {
+    setImporter(initialImporter);
+    setFormData({
+      name: initialImporter.name,
+      cnpj: initialImporter.cnpj || '',
+      representanteCommissionPct: String(initialImporter.representanteCommissionPct ?? 0),
+      contactEmail: initialImporter.contactEmail,
+      contactPhone: initialImporter.contactPhone,
+    });
+  }, [
+    initialImporter.id,
+    initialImporter.name,
+    initialImporter.cnpj,
+    initialImporter.representanteCommissionPct,
+    initialImporter.contactEmail,
+    initialImporter.contactPhone,
+  ]);
+
+  const [productFormData, setProductFormData] = useState({
+    code: '',
+    name: '',
+    category: '',
+    price: '',
+    quantityPerBox: '',
+    material: '',
+    unitsPerPackage: '',
+    dimensions: '',
+    detalhe: '',
+    description: '',
+    published: true,
+    outOfStock: false,
+  });
+
+  useEffect(() => {
+    if (activeTab !== 'products') {
+      setShowProductDeleteOptions(false);
+      setSelectedProductIds(new Set());
+      setBulkDeleteMode(null);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const valid = new Set(apiProducts.map((p) => p.id));
+    setSelectedProductIds((prev) => {
+      const next = new Set<string>();
+      let changed = false;
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      });
+      if (!changed && next.size === prev.size) return prev;
+      return next;
+    });
+  }, [apiProducts]);
+
+  const getProductSaveErrorMessage = (error: unknown) => {
+    if (!error || typeof error !== 'object') {
+      return 'Não foi possível salvar o produto.';
+    }
+
+    const message = 'message' in error ? String(error.message) : '';
+    const code = 'code' in error ? String(error.code) : '';
+
+    if (code === '23505' || message.toLowerCase().includes('duplicate key')) {
+      return 'Já existe um produto com este código nesta importadora.';
+    }
+
+    if (message) {
+      return message;
+    }
+
+    return 'Não foi possível salvar o produto.';
+  };
+
+  const handleSaveInfo = async () => {
+    const pctRaw = formData.representanteCommissionPct.replace(',', '.').trim();
+    const pct = Number(pctRaw);
+    if (Number.isNaN(pct) || pct < 0 || pct > 100) {
+      toast.error('Percentual de comissão deve ser entre 0 e 100.');
+      return;
+    }
+
+    if (isSupabaseConfigured()) {
+      setSavingImporterInfo(true);
+      try {
+        await updateImportadora(importer.id, {
+          name: formData.name.trim(),
+          cnpj: formData.cnpj.trim(),
+          representanteCommissionPct: pct,
+        });
+      } catch (e) {
+        console.error(e);
+        const msg = e instanceof Error ? e.message : 'Não foi possível salvar as alterações no servidor.';
+        toast.error(msg);
+        setSavingImporterInfo(false);
+        return;
+      }
+      setSavingImporterInfo(false);
+    }
+
+    const updatedImporter = {
+      ...importer,
+      name: formData.name.trim(),
+      cnpj: formData.cnpj,
+      contactEmail: formData.contactEmail,
+      contactPhone: formData.contactPhone,
+      representanteCommissionPct: pct,
+    };
+    setImporter(updatedImporter);
+    onUpdate(updatedImporter);
+    toast.success('Informações atualizadas com sucesso!');
+  };
+
+  const resetProductImageDraft = () => {
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+  };
+
+  const handleProductImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem (JPEG, PNG, WebP ou GIF).');
+      return;
+    }
+    if (file.size > PRODUCT_IMAGE_MAX_BYTES) {
+      toast.error('A imagem deve ter no máximo 5 MB.');
+      return;
+    }
+    setProductImageFile(file);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  };
+
+  const handleRemoveProductImage = () => {
+    setProductImageFile(null);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setProductImageRemoved(true);
+  };
+
+  const handleAddProduct = () => {
+    setEditingProduct(null);
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setProductFormData({
+      code: '',
+      name: '',
+      category: '',
+      price: '',
+      quantityPerBox: '',
+      material: '',
+      unitsPerPackage: '',
+      dimensions: '',
+      detalhe: '',
+      description: '',
+      published: true,
+      outOfStock: false,
+    });
+    setShowProductDialog(true);
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setProductImageFile(null);
+    setProductImageRemoved(false);
+    setProductImagePreview((prev) => {
+      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return product.image ?? null;
+    });
+    setProductFormData({
+      code: product.code,
+      name: product.name,
+      category: product.category,
+      price: product.price.toString(),
+      quantityPerBox: product.quantityPerBox > 0 ? product.quantityPerBox.toString() : '',
+      material: product.material,
+      unitsPerPackage: product.unitsPerPackage.toString(),
+      dimensions: product.dimensions,
+      detalhe: product.detalhe,
+      description: product.description,
+      published: product.published,
+      outOfStock: product.outOfStock,
+    });
+    setShowProductDialog(true);
+  };
+
+  const handleSaveProduct = async () => {
+    const code = productFormData.code.trim();
+    const name = productFormData.name.trim();
+    const category = productFormData.category.trim();
+    const price = Number(productFormData.price);
+    const qtyRaw = productFormData.quantityPerBox.trim();
+    let minOrder = 0;
+    if (qtyRaw) {
+      minOrder = Number.parseInt(qtyRaw, 10);
+      if (!Number.isFinite(minOrder) || minOrder <= 0) {
+        toast.error('A quantidade por caixa deve ser maior que zero.');
+        return;
+      }
+    }
+
+    if (!code || !name || !category || !productFormData.price) {
+      toast.error('Preencha código, nome, categoria e preço.');
+      return;
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      toast.error('Informe um preço maior que zero.');
+      return;
+    }
+
+    setProductSaving(true);
+    try {
+      const outOfStock = productFormData.published && productFormData.outOfStock;
+
+      let uploadedImageUrl: string | undefined;
+      if (productImageFile) {
+        if (!isSupabaseConfigured()) {
+          toast.error('Configure o Supabase para enviar fotos dos produtos.');
+          setProductSaving(false);
+          return;
+        }
+        uploadedImageUrl = await uploadProductPhoto(importer.id, productImageFile);
+      }
+
+      if (editingProduct) {
+        const imageUpdate: { image?: string | null } = {};
+        if (uploadedImageUrl) {
+          imageUpdate.image = uploadedImageUrl;
+        } else if (productImageRemoved) {
+          imageUpdate.image = null;
+        }
+
+        await productsApi.updateProduct(editingProduct.id, {
+          name,
+          category,
+          price,
+          minOrder,
+          material: productFormData.material.trim() || undefined,
+          dimensions: productFormData.dimensions.trim() || undefined,
+          description: productFormData.description.trim() || undefined,
+          detalhe1: productFormData.detalhe.trim() || undefined,
+          active: productFormData.published,
+          outOfStock,
+          ...imageUpdate,
+        });
+        toast.success('Produto atualizado com sucesso!');
+      } else {
+        await productsApi.createProduct({
+          importadoraId: importer.id,
+          code,
+          name,
+          category,
+          price,
+          minOrder,
+          material: productFormData.material.trim() || undefined,
+          dimensions: productFormData.dimensions.trim() || undefined,
+          description: productFormData.description.trim() || undefined,
+          detalhe1: productFormData.detalhe.trim() || undefined,
+          active: productFormData.published,
+          outOfStock,
+          image: uploadedImageUrl,
+        });
+        toast.success('Produto adicionado com sucesso!');
+      }
+      await refetchProducts();
+      setShowProductDialog(false);
+    } catch (e) {
+      console.error(e);
+      toast.error(getProductSaveErrorMessage(e));
+    } finally {
+      setProductSaving(false);
+    }
+  };
+
+  const confirmDeleteProduct = (product: Product) => {
+    setDeletingProduct(product);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteProduct = async () => {
+    const target = deletingProduct ?? editingProduct;
+    if (!target) {
+      toast.error('Nenhum produto selecionado para exclusão.');
+      return;
+    }
+    try {
+      await productsApi.deleteProduct(target.id);
+      toast.success('Produto excluído com sucesso!');
+      setShowDeleteDialog(false);
+      setDeletingProduct(null);
+      setShowProductDialog(false);
+      setEditingProduct(null);
+      setSelectedProductIds((prev) => {
+        if (!prev.has(target.id)) return prev;
+        const next = new Set(prev);
+        next.delete(target.id);
+        return next;
+      });
+      const updatedList = await refetchProducts();
+      setImporter((prev) => {
+        const next = { ...prev, productsCount: updatedList.length };
+        onUpdate(next);
+        return next;
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir o produto.');
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        toast.error('Por favor, envie apenas arquivos PDF');
+        return;
+      }
+      setUploadedFileName(file.name);
+      setUploadedFile(file);
+      toast.success('Arquivo selecionado. Clique em Processar Catálogo.');
+    }
+    event.target.value = '';
+  };
+
+  type CatalogProcessResult = {
+    created: number;
+    /** Produtos já existentes que foram atualizados (quando o modo "atualizar" está ligado). */
+    updated: number;
+    uploadFailed: boolean;
+    skippedCount: number;
+    /** Produtos ignorados por já existirem (mesmo código) nesta importadora. */
+    skippedExisting: number;
+    hadAnyImage: boolean;
+    ocrPageCount: number;
+    /** Houve produtos identificados? Distingue "0 criados" de erro. */
+    foundProducts: boolean;
+  };
+
+  type CatalogDedupDecision =
+    | { action: 'create'; code: string }
+    | { action: 'skip'; code: string }
+    | { action: 'update'; code: string; existingId: string };
+
+  /**
+   * Deduplicação por código (REF) no importe atual. Para produtos já cadastrados nesta
+   * importadora: atualiza (quando updateExisting=true) ou ignora. Repetições do mesmo código
+   * dentro do catálogo são tratadas uma única vez. Produtos sem código não têm como ser
+   * deduplicados, então recebem um código de fallback único e são criados.
+   */
+  const buildCatalogDedup = (updateExisting: boolean) => {
+    const normalize = (code: string) => code.trim().toUpperCase();
+    const existingIdByCode = new Map<string, string>();
+    for (const p of products) {
+      const key = normalize(p.code);
+      if (key.length > 0 && !existingIdByCode.has(key)) {
+        existingIdByCode.set(key, p.id);
+      }
+    }
+    const seen = new Set<string>();
+    return (rawCode: string, pageIndex: number, batchIndex: number): CatalogDedupDecision => {
+      const code = (rawCode && rawCode.trim()) || '';
+      if (code) {
+        const key = normalize(code);
+        if (seen.has(key)) {
+          return { action: 'skip', code };
+        }
+        seen.add(key);
+        const existingId = existingIdByCode.get(key);
+        if (existingId) {
+          return updateExisting
+            ? { action: 'update', code, existingId }
+            : { action: 'skip', code };
+        }
+        return { action: 'create', code };
+      }
+      const fallbackBase = `PAG-${pageIndex + 1}-${batchIndex + 1}`;
+      let candidate = fallbackBase;
+      let n = 2;
+      while (existingIdByCode.has(normalize(candidate)) || seen.has(normalize(candidate))) {
+        candidate = `${fallbackBase}-${n}`;
+        n += 1;
+      }
+      seen.add(normalize(candidate));
+      return { action: 'create', code: candidate };
+    };
+  };
+
+  /** Páginas enviadas à IA por vez. 1 (sequencial) evita estourar o limite por minuto (429) do Gemini. */
+  const AI_PAGE_CONCURRENCY = 1;
+
+  /**
+   * Extração com IA de visão (Gemini): cada produto vem com campos estruturados e a
+   * posição da foto, usada para recortar a imagem. Lança CatalogExtractionUnavailableError
+   * quando a IA não está disponível (sem chave/sessão), para o chamador cair no fallback.
+   */
+  const runAiCatalogExtraction = async (file: File): Promise<CatalogProcessResult> => {
+    const { pages, skippedPageIndices, coverText } = await extractCatalogPagesForAi(file, {
+      onPageProcessed: ({ currentPage, totalPages }) => {
+        setCatalogProgress({ currentPage, totalPages });
+      },
+    });
+
+    if (pages.length === 0) {
+      return {
+        created: 0,
+        updated: 0,
+        uploadFailed: false,
+        skippedCount: skippedPageIndices.length,
+        skippedExisting: 0,
+        hadAnyImage: false,
+        ocrPageCount: 0,
+        foundProducts: false,
+      };
+    }
+
+    const pageProducts: Array<{
+      pageIndex: number;
+      pageBlob: Blob;
+      product: ExtractedCatalogProduct;
+    }> = [];
+    for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
+      const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(async (page) => {
+          try {
+            const extracted = await extractCatalogPage({
+              imageBase64: page.base64,
+              mimeType: page.mimeType,
+              nativeText: page.nativeText,
+              categoryNames,
+              catalogContext: coverText,
+            });
+            return { page, extracted };
+          } catch (err) {
+            if (
+              err instanceof CatalogExtractionUnavailableError ||
+              err instanceof CatalogExtractionRateLimitError
+            ) {
+              throw err;
+            }
+            console.warn(`Falha ao extrair a página ${page.pageIndex + 1} do catálogo:`, err);
+            return { page, extracted: [] as ExtractedCatalogProduct[] };
+          }
+        })
+      );
+      for (const { page, extracted } of results) {
+        for (const product of extracted) {
+          pageProducts.push({ pageIndex: page.pageIndex, pageBlob: page.blob, product });
+        }
+      }
+    }
+
+    if (pageProducts.length === 0) {
+      return {
+        created: 0,
+        updated: 0,
+        uploadFailed: false,
+        skippedCount: skippedPageIndices.length,
+        skippedExisting: 0,
+        hadAnyImage: false,
+        ocrPageCount: 0,
+        foundProducts: false,
+      };
+    }
+
+    const dedup = buildCatalogDedup(updateExistingProducts);
+    const countByPage = new Map<number, number>();
+    for (const { pageIndex } of pageProducts) {
+      countByPage.set(pageIndex, (countByPage.get(pageIndex) ?? 0) + 1);
+    }
+    const slotByPage = new Map<number, number>();
+    const batchId = String(Date.now());
+
+    let created = 0;
+    let updated = 0;
+    let skippedExisting = 0;
+    let uploadFailed = false;
+    let hadAnyImage = false;
+    for (let idx = 0; idx < pageProducts.length; idx++) {
+      const { pageIndex, pageBlob, product } = pageProducts[idx];
+      const decision = dedup(product.code, pageIndex, idx);
+      if (decision.action === 'skip') {
+        skippedExisting++;
+        continue;
+      }
+
+      let blob: Blob = pageBlob;
+      if (product.box) {
+        const cropped = await cropImageBlobRect(
+          pageBlob,
+          product.box.left,
+          product.box.top,
+          product.box.right,
+          product.box.bottom
+        );
+        if (cropped) blob = cropped;
+      }
+
+      const total = countByPage.get(pageIndex) ?? 1;
+      let productSlot: number | undefined;
+      if (total > 1) {
+        const slot = slotByPage.get(pageIndex) ?? 0;
+        productSlot = slot;
+        slotByPage.set(pageIndex, slot + 1);
+      }
+
+      let imageUrl: string | undefined;
+      try {
+        imageUrl = await uploadCatalogPageImage(importer.id, pageIndex, blob, batchId, productSlot);
+        hadAnyImage = true;
+      } catch (storageErr) {
+        console.warn('Upload de imagem falhou para um produto:', storageErr);
+        uploadFailed = true;
+      }
+
+      if (decision.action === 'update') {
+        await productsApi.updateProduct(decision.existingId, {
+          name: product.name,
+          category: product.category || undefined,
+          price: product.price,
+          minOrder: product.minOrder,
+          material: product.material || undefined,
+          dimensions: product.dimensions || undefined,
+          description: product.description || undefined,
+          image: imageUrl,
+        });
+        updated++;
+      } else {
+        await productsApi.createProduct({
+          importadoraId: importer.id,
+          code: decision.code,
+          name: product.name,
+          category: product.category || DEFAULT_CATEGORY,
+          price: product.price,
+          minOrder: product.minOrder,
+          material: product.material || undefined,
+          dimensions: product.dimensions || undefined,
+          description: product.description || undefined,
+          active: true,
+          image: imageUrl,
+        });
+        created++;
+      }
+    }
+
+    return {
+      created,
+      updated,
+      uploadFailed,
+      skippedCount: skippedPageIndices.length,
+      skippedExisting,
+      hadAnyImage,
+      ocrPageCount: 0,
+      foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
+    };
+  };
+
+  /**
+   * Extração heurística (texto do PDF/OCR + geometria). Mantida como fallback de
+   * resiliência para o caso de a IA estar indisponível.
+   */
+  const runHeuristicCatalogExtraction = async (file: File): Promise<CatalogProcessResult> => {
+    const {
+      pageTexts,
+      pageBlobs,
+      ocrPageCount,
+      pageSkuVerticalBands,
+      pageLineMetas,
+      pageTextBoundsFracs,
+      pageSkuImageCropFracs,
+      skippedPageIndices,
+    } = await extractTextAndPageImages(file, {
+      onOcrStarting: () => {
+        toast.info('Usando OCR no catálogo', {
+          description:
+            'Algumas páginas têm pouco texto selecionável; estamos lendo a imagem. Pode levar mais alguns instantes.',
+          duration: 10_000,
+        });
+      },
+      onPageProcessed: ({ currentPage, totalPages }) => {
+        setCatalogProgress({ currentPage, totalPages });
+      },
+    });
+    const itemsWithPage: Array<ReturnType<typeof parseCatalogText>[number] & { pageIndex: number }> = [];
+    for (let i = 0; i < pageTexts.length; i++) {
+      const pageItems = parseCatalogText(pageTexts[i], {
+        lineMeta: pageLineMetas[i],
+        categoryNames,
+      });
+      pageItems.forEach((item) => itemsWithPage.push({ ...item, pageIndex: i }));
+    }
+    if (itemsWithPage.length === 0) {
+      return {
+        created: 0,
+        updated: 0,
+        uploadFailed: false,
+        skippedCount: skippedPageIndices.length,
+        skippedExisting: 0,
+        hadAnyImage: false,
+        ocrPageCount,
+        foundProducts: false,
+      };
+    }
+    const dedup = buildCatalogDedup(updateExistingProducts);
+
+    const itemsByPage = new Map<number, typeof itemsWithPage>();
+    for (const it of itemsWithPage) {
+      const arr = itemsByPage.get(it.pageIndex) ?? [];
+      arr.push(it);
+      itemsByPage.set(it.pageIndex, arr);
+    }
+
+    const cropByItem = new Map<
+      (typeof itemsWithPage)[number],
+      { top: number; bottom: number; left?: number; right?: number }
+    >();
+    for (const [pIdx, list] of itemsByPage) {
+      const bounds = pageTextBoundsFracs[pIdx];
+      const bands = pageSkuVerticalBands[pIdx] ?? [];
+      const imageCrops = pageSkuImageCropFracs[pIdx] ?? [];
+      if (list.length === 1) {
+        const bandIdx = bands.findIndex((b) => b.sku === list[0].code);
+        const imageCrop = bandIdx >= 0 ? imageCrops[bandIdx] : undefined;
+        if (imageCrop) {
+          cropByItem.set(list[0], {
+            top: imageCrop.topFrac,
+            bottom: imageCrop.bottomFrac,
+            left: imageCrop.leftFrac,
+            right: imageCrop.rightFrac,
+          });
+        } else if (bounds) {
+          cropByItem.set(list[0], {
+            top: bounds.topFrac,
+            bottom: bounds.bottomFrac,
+            left: 0,
+            right: bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
+          });
+        }
+        continue;
+      }
+      const equalInPage = bounds
+        ? equalVerticalCropFracsInBand(list.length, bounds.topFrac, bounds.bottomFrac)
+        : equalVerticalCropFracs(list.length);
+      list.forEach((item, slot) => {
+        const bandIdx = bands.findIndex((b) => b.sku === item.code);
+        const imageCrop = bandIdx >= 0 ? imageCrops[bandIdx] : undefined;
+        if (imageCrop) {
+          cropByItem.set(item, {
+            top: imageCrop.topFrac,
+            bottom: imageCrop.bottomFrac,
+            left: imageCrop.leftFrac,
+            right: imageCrop.rightFrac,
+          });
+          return;
+        }
+        const bySku = bandIdx >= 0 ? bands[bandIdx] : undefined;
+        if (bySku) {
+          cropByItem.set(item, {
+            top: bySku.topFrac,
+            bottom: bySku.bottomFrac,
+            left: 0,
+            right: bounds && bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
+          });
+        } else if (equalInPage[slot]) {
+          cropByItem.set(item, {
+            top: equalInPage[slot].topFrac,
+            bottom: equalInPage[slot].bottomFrac,
+            left: 0,
+            right: bounds && bounds.leftFrac > 0.15 ? bounds.leftFrac : 0.42,
+          });
+        }
+      });
+    }
+
+    const batchId = String(Date.now());
+
+    let created = 0;
+    let updated = 0;
+    let skippedExisting = 0;
+    let uploadFailed = false;
+    for (let idx = 0; idx < itemsWithPage.length; idx++) {
+      const item = itemsWithPage[idx];
+      const decision = dedup(item.code, item.pageIndex, idx);
+      if (decision.action === 'skip') {
+        skippedExisting++;
+        continue;
+      }
+      const pageBlob = item.pageIndex < pageBlobs.length ? pageBlobs[item.pageIndex] : undefined;
+      let blob: Blob | undefined = pageBlob;
+      const crop = cropByItem.get(item);
+      if (crop && pageBlob) {
+        let cropped: Blob | null = null;
+        if (crop.left != null && crop.right != null) {
+          cropped = await cropImageBlobRect(pageBlob, crop.left, crop.top, crop.right, crop.bottom);
+        }
+        if (!cropped) {
+          cropped = await cropImageBlobVertical(pageBlob, crop.top, crop.bottom);
+        }
+        if (cropped) blob = cropped;
+      }
+      const samePage = itemsByPage.get(item.pageIndex) ?? [item];
+      const productSlot = samePage.length > 1 ? samePage.indexOf(item) : undefined;
+      let imageUrl: string | undefined;
+      if (blob) {
+        try {
+          imageUrl = await uploadCatalogPageImage(
+            importer.id,
+            item.pageIndex,
+            blob,
+            batchId,
+            productSlot
+          );
+        } catch (storageErr) {
+          console.warn('Upload de imagem falhou para um produto:', storageErr);
+          uploadFailed = true;
+        }
+      }
+      if (decision.action === 'update') {
+        await productsApi.updateProduct(decision.existingId, {
+          name: item.name,
+          category: item.category || undefined,
+          price: item.price,
+          minOrder: item.minOrder,
+          material: item.material || undefined,
+          dimensions: item.dimensions || undefined,
+          description: item.description || undefined,
+          image: imageUrl,
+        });
+        updated++;
+      } else {
+        await productsApi.createProduct({
+          importadoraId: importer.id,
+          code: decision.code,
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          minOrder: item.minOrder,
+          material: item.material || undefined,
+          dimensions: item.dimensions || undefined,
+          description: item.description,
+          active: true,
+          image: imageUrl,
+        });
+        created++;
+      }
+    }
+
+    return {
+      created,
+      updated,
+      uploadFailed,
+      skippedCount: skippedPageIndices.length,
+      skippedExisting,
+      hadAnyImage: pageBlobs.length > 0,
+      ocrPageCount,
+      foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
+    };
+  };
+
+  const handleProcessCatalog = async () => {
+    if (!uploadedFile) return;
+    setCatalogProcessing(true);
+    setCatalogProgress(null);
+    try {
+      let result: CatalogProcessResult;
+      try {
+        result = await runAiCatalogExtraction(uploadedFile);
+      } catch (aiError) {
+        if (aiError instanceof CatalogExtractionRateLimitError) {
+          toast.error('Limite de uso da IA atingido (429).', {
+            description:
+              'Aguarde alguns minutos e tente novamente. Se persistir, verifique a cota/billing da sua chave do Gemini no Google AI Studio.',
+            duration: 12_000,
+          });
+          return;
+        }
+        if (aiError instanceof CatalogExtractionUnavailableError) {
+          console.warn('Extração por IA indisponível; usando método alternativo:', aiError.message);
+          toast.info('IA indisponível: processando com o método alternativo.', {
+            description: aiError.message,
+          });
+          setCatalogProgress(null);
+          result = await runHeuristicCatalogExtraction(uploadedFile);
+        } else {
+          throw aiError;
+        }
+      }
+
+      if (result.skippedCount > 0) {
+        toast.info(`${result.skippedCount} página(s) ignorada(s) (capa ou sem produtos).`);
+      }
+
+      if (result.created === 0 && result.updated === 0) {
+        if (result.skippedExisting > 0) {
+          await refetchProducts();
+          setShowCatalogUploadDialog(false);
+          setUploadedFileName(null);
+          setUploadedFile(null);
+          setCatalogProgress(null);
+          toast.info(
+            `Nenhuma novidade: ${result.skippedExisting} produto(s) já cadastrados foram ignorados.`
+          );
+        } else {
+          toast.warning(
+            'Nenhum produto identificado no PDF. Tente outro arquivo ou adicione produtos manualmente.'
+          );
+        }
+        return;
+      }
+      if (result.uploadFailed) {
+        toast.warning('Algumas imagens não foram enviadas; revise os produtos sem foto.');
+      }
+
+      await refetchProducts();
+      setShowCatalogUploadDialog(false);
+      setUploadedFileName(null);
+      setUploadedFile(null);
+      setCatalogProgress(null);
+
+      const titleParts: string[] = [];
+      if (result.created > 0) titleParts.push(`${result.created} produto(s) novo(s)`);
+      if (result.updated > 0) titleParts.push(`${result.updated} atualizado(s)`);
+      const successTitle = `Catálogo processado: ${titleParts.join(' e ')}.`;
+      const successParts: string[] = [];
+      if (result.skippedExisting > 0) {
+        successParts.push(`${result.skippedExisting} já existiam e foram ignorados.`);
+      }
+      if (result.ocrPageCount > 0) {
+        successParts.push(
+          `OCR aplicado em ${result.ocrPageCount} página(s) para extrair os dados.`
+        );
+      }
+      if (successParts.length > 0) {
+        toast.success(successTitle, { description: successParts.join(' ') });
+      } else {
+        toast.success(successTitle);
+      }
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(
+        msg.length > 80
+          ? `Erro ao processar catálogo. Verifique o console (F12) para detalhes.`
+          : `Erro: ${msg}`
+      );
+    } finally {
+      setCatalogProcessing(false);
+      setCatalogProgress(null);
+    }
+  };
+
+  const handleImageZoom = (image: string) => {
+    setZoomedImage(image);
+    setShowImageZoomDialog(true);
+  };
+
+  const handleDeleteImporter = () => {
+    if (onDelete) {
+      onDelete(importer.id);
+      setShowDeleteImporterDialog(false);
+    }
+  };
+
+  const handleSaveFinancial = () => {
+    toast.success('Dados financeiros atualizados com sucesso!');
+  };
+
+  const filteredProducts = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          product.code.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          product.name.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          (product.category || '').toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          (product.material || '').toLowerCase().includes(productSearchTerm.toLowerCase())
+      ),
+    [products, productSearchTerm]
+  );
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = filteredProducts.map((p) => p.id);
+    const allVisibleSelected =
+      visibleIds.length > 0 && visibleIds.every((id) => selectedProductIds.has(id));
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (!bulkDeleteMode) return;
+    setBulkDeleting(true);
+    try {
+      if (bulkDeleteMode === 'all') {
+        await productsApi.deleteProductsByImportadoraId(importer.id);
+        toast.success('Todos os produtos foram excluídos.');
+      } else {
+        const ids = Array.from(selectedProductIds);
+        if (ids.length === 0) {
+          toast.error('Nenhum produto selecionado.');
+          setBulkDeleteMode(null);
+          return;
+        }
+        await productsApi.deleteProductsByIds(ids);
+        toast.success(
+          ids.length === 1 ? '1 produto excluído.' : `${ids.length} produtos excluídos.`
+        );
+      }
+      const updatedList = await refetchProducts();
+      setSelectedProductIds(new Set());
+      setBulkDeleteMode(null);
+      setShowProductDeleteOptions(false);
+      setImporter((prev) => {
+        const next = { ...prev, productsCount: updatedList.length };
+        onUpdate(next);
+        return next;
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir os produtos.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleProductDeleteOptions = () => {
+    setShowProductDeleteOptions((prev) => {
+      if (prev) {
+        setSelectedProductIds(new Set());
+        setBulkDeleteMode(null);
+      }
+      return !prev;
+    });
+  };
+
+  const visibleIds = filteredProducts.map((p) => p.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedProductIds.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedProductIds.has(id));
+
+  return (
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
+      {/* Header */}
+      <div className="flex items-start gap-3 min-w-0">
+        <Button variant="ghost" onClick={onBack} className="h-10 w-10 shrink-0 p-0">
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 sm:h-12 sm:w-12">
+            <Building2 className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="mb-0 truncate text-lg sm:text-2xl">{importer.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              {products.length} produtos cadastrados
+            </p>
+          </div>
+        </div>
+        {onDelete && (
+          <DropdownMenu modal>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="relative z-10 h-10 w-10 shrink-0"
+                aria-label="Configurações da importadora"
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={8} className="z-[200]">
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setShowDeleteImporterDialog(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Excluir importadora
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1">
+          <TabsTrigger value="info" className="px-1.5 text-xs sm:px-2 sm:text-sm">
+            Informações
+          </TabsTrigger>
+          <TabsTrigger value="products" className="gap-1 px-1.5 text-xs sm:px-2 sm:text-sm">
+            <span className="truncate">Produtos</span>
+            <Badge variant="secondary" className="h-5 min-w-5 shrink-0 px-1 text-[10px] sm:text-xs">
+              {products.length}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="financial" className="px-1.5 text-xs sm:px-2 sm:text-sm">
+            Financeiro
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Aba de Informações */}
+        <TabsContent value="info" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Dados Cadastrais</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Nome da Importadora *</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cnpj">CNPJ</Label>
+                  <Input
+                    id="cnpj"
+                    value={formData.cnpj}
+                    onChange={(e) =>
+                      setFormData({ ...formData, cnpj: e.target.value })
+                    }
+                    placeholder="00.000.000/0000-00"
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="commission-pct">Comissão para representantes (%) *</Label>
+                  <Input
+                    id="commission-pct"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Ex: 5"
+                    value={formData.representanteCommissionPct}
+                    onChange={(e) =>
+                      setFormData({ ...formData, representanteCommissionPct: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email de Contato *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.contactEmail}
+                    onChange={(e) =>
+                      setFormData({ ...formData, contactEmail: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Telefone *</Label>
+                  <Input
+                    id="phone"
+                    value={formData.contactPhone}
+                    onChange={(e) =>
+                      setFormData({ ...formData, contactPhone: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end pt-4">
+                <Button
+                  onClick={() => void handleSaveInfo()}
+                  className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+                  disabled={savingImporterInfo}
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {savingImporterInfo ? 'Salvando…' : 'Salvar Alterações'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Aba de Produtos */}
+        <TabsContent value="products" className="space-y-6">
+          <div className="flex flex-col gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Catálogo de Produtos</h3>
+              <p className="text-sm text-muted-foreground">
+                Gerencie os produtos desta importadora
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <Button
+                type="button"
+                variant="outline"
+                className={
+                  showProductDeleteOptions
+                    ? 'w-full sm:w-auto'
+                    : 'w-full text-destructive border-destructive/40 hover:bg-destructive/10 sm:w-auto'
+                }
+                onClick={toggleProductDeleteOptions}
+                disabled={products.length === 0 && !showProductDeleteOptions}
+              >
+                {showProductDeleteOptions ? (
+                  <X className="w-4 h-4 mr-2 shrink-0" />
+                ) : (
+                  <Trash2 className="w-4 h-4 mr-2 shrink-0" />
+                )}
+                <span className="truncate">
+                  {showProductDeleteOptions ? 'Cancelar exclusão' : 'Excluir produtos'}
+                </span>
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowCatalogUploadDialog(true)}
+                className="w-full sm:w-auto"
+              >
+                <Upload className="w-4 h-4 mr-2 shrink-0" />
+                Upload de Catálogo
+              </Button>
+              <Button
+                onClick={handleAddProduct}
+                className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+              >
+                <Plus className="w-4 h-4 mr-2 shrink-0" />
+                Adicionar Produto
+              </Button>
+            </div>
+          </div>
+
+          {/* Busca de Produtos */}
+          {products.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por código, nome, categoria ou material..."
+                value={productSearchTerm}
+                onChange={(e) => setProductSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          )}
+
+          {products.length > 0 && showProductDeleteOptions && (
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="select-visible-products"
+                  checked={
+                    allVisibleSelected
+                      ? true
+                      : someVisibleSelected
+                        ? 'indeterminate'
+                        : false
+                  }
+                  onCheckedChange={() => toggleSelectAllVisible()}
+                  disabled={filteredProducts.length === 0}
+                />
+                <label
+                  htmlFor="select-visible-products"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Selecionar visíveis
+                </label>
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {selectedProductIds.size} selecionado(s)
+              </span>
+              <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row sm:flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-destructive border-destructive/40 hover:bg-destructive/10 sm:w-auto"
+                  disabled={selectedProductIds.size === 0}
+                  onClick={() => setBulkDeleteMode('selected')}
+                >
+                  Excluir selecionados
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => setBulkDeleteMode('all')}
+                >
+                  Excluir todos os produtos
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Lista de Produtos */}
+          {productsLoading && products.length === 0 ? (
+            <Card className="p-12">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+                  <Package className="w-8 h-8 text-muted-foreground animate-pulse" />
+                </div>
+                <p className="text-muted-foreground">Carregando produtos...</p>
+              </div>
+            </Card>
+          ) : filteredProducts.length > 0 ? (
+            <div className="space-y-3">
+              {filteredProducts.map((product) => {
+                const metaSections = [
+                  (product.quantityPerBox > 0 || product.unitsPerPackage > 0) && {
+                    key: 'qty',
+                    content: (
+                      <>
+                        {product.quantityPerBox > 0 && (
+                          <p className="text-muted-foreground">
+                            <span className="font-medium text-foreground">{product.quantityPerBox}</span> unid/caixa
+                          </p>
+                        )}
+                        {product.unitsPerPackage > 0 && (
+                          <p className="text-muted-foreground">
+                            Sacola:{' '}
+                            <span className="font-medium text-foreground">{product.unitsPerPackage}</span> unid
+                          </p>
+                        )}
+                      </>
+                    ),
+                  },
+                  product.material && {
+                    key: 'material',
+                    content: (
+                      <p className="break-words text-muted-foreground">{product.material}</p>
+                    ),
+                  },
+                  product.dimensions && {
+                    key: 'dimensions',
+                    content: <p className="break-words text-muted-foreground">Dim: {product.dimensions}</p>,
+                  },
+                ].filter((section): section is { key: string; content: React.ReactNode } => Boolean(section));
+
+                const hasSecondRow =
+                  metaSections.length > 0 || Boolean(product.detalhe) || Boolean(product.description);
+
+                const priceBlock = (
+                  <div className="ml-auto shrink-0 text-right">
+                    <div className="whitespace-nowrap text-lg font-bold text-primary">
+                      R$ {product.price.toFixed(2)}
+                      <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
+                    </div>
+                    {product.quantityPerBox > 0 && (
+                      <p className="whitespace-nowrap text-xs text-muted-foreground">
+                        Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                );
+
+                return (
+                <Card key={product.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-3 sm:p-4">
+                    <div className="flex gap-3">
+                      {showProductDeleteOptions && (
+                        <Checkbox
+                          className="mt-1 shrink-0"
+                          checked={selectedProductIds.has(product.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedProductIds((prev) => {
+                              const next = new Set(prev);
+                              if (checked === true) next.add(product.id);
+                              else next.delete(product.id);
+                              return next;
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Selecionar ${product.code}`}
+                        />
+                      )}
+                      <div className="relative h-20 w-20 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-muted group sm:h-24 sm:w-24">
+                        {product.image ? (
+                          <>
+                            <ImageWithFallback
+                              src={product.image}
+                              alt={product.name}
+                              className="h-full w-full object-cover"
+                            />
+                            <div
+                              className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
+                              onClick={() => handleImageZoom(product.image!)}
+                            >
+                              <ZoomIn className="h-5 w-5 text-white" />
+                            </div>
+                          </>
+                        ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Package className="h-9 w-9 text-muted-foreground sm:h-10 sm:w-10" />
+                            </div>
+                        )}
+                      </div>
+
+                      <div className="flex min-w-0 flex-1 flex-col gap-2">
+                        {/* Linha 1: identidade + status/editar no topo */}
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <Badge variant="outline" className="mb-1 font-mono text-xs">
+                              {product.code}
+                            </Badge>
+                            <h4 className="font-semibold leading-snug">{product.name}</h4>
+                            {product.category && (
+                              <p className="truncate text-xs text-muted-foreground">{product.category}</p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 flex-col items-end gap-2 self-start">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {product.published ? (
+                                <Badge variant="default" className="whitespace-nowrap bg-green-600 text-xs">
+                                  <Eye className="mr-1 h-3 w-3" />
+                                  Publicado
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="whitespace-nowrap text-xs">
+                                  <EyeOff className="mr-1 h-3 w-3" />
+                                  Rascunho
+                                </Badge>
+                              )}
+                              {product.published && product.outOfStock && (
+                                <Badge
+                                  variant="outline"
+                                  className="whitespace-nowrap border-amber-500 bg-amber-50 text-xs text-amber-700"
+                                >
+                                  Esgotado
+                                </Badge>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 w-9 shrink-0 p-0"
+                                onClick={() => handleEditProduct(product)}
+                                title="Editar"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            {!hasSecondRow && (
+                              <div className="text-right">
+                                <div className="whitespace-nowrap text-lg font-bold text-primary">
+                                  R$ {product.price.toFixed(2)}
+                                  <span className="ml-1 text-xs font-semibold text-muted-foreground">/un</span>
+                                </div>
+                                {product.quantityPerBox > 0 && (
+                                  <p className="whitespace-nowrap text-xs text-muted-foreground">
+                                    Caixa: R$ {(product.price * product.quantityPerBox).toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Linha 2: metadados + preço na ponta direita */}
+                        {hasSecondRow && (
+                          <div className="flex items-start gap-4 border-t pt-2 text-sm">
+                            <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-5 sm:gap-y-2">
+                              {metaSections.map((section) => (
+                                <div key={section.key} className="min-w-0 shrink-0 sm:max-w-[11rem]">
+                                  {section.content}
+                                </div>
+                              ))}
+                              {(product.detalhe || product.description) && (
+                                <div className="min-w-0 flex-1 space-y-1 sm:border-l sm:border-border sm:pl-5">
+                                  {product.detalhe && (
+                                    <p className="break-words leading-snug text-muted-foreground">
+                                      {product.detalhe}
+                                    </p>
+                                  )}
+                                  {product.description && (
+                                    <p className="break-words leading-snug text-muted-foreground">
+                                      {product.description}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {priceBlock}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                );
+              })}
+            </div>
+          ) : products.length === 0 ? (
+            <Card className="p-12">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+                  <Package className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg">Nenhum produto cadastrado</h3>
+                <p className="text-muted-foreground max-w-sm mx-auto">
+                  Faça o upload de um catálogo em PDF ou adicione produtos manualmente
+                </p>
+                <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowCatalogUploadDialog(true)}
+                    className="w-full sm:w-auto"
+                  >
+                    <Upload className="w-4 h-4 mr-2 shrink-0" />
+                    Upload de Catálogo
+                  </Button>
+                  <Button
+                    onClick={handleAddProduct}
+                    className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Adicionar Produto
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-12">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+                  <Search className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg">Nenhum produto encontrado</h3>
+                <p className="text-muted-foreground">
+                  Tente buscar com outros termos
+                </p>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Aba Financeira */}
+        <TabsContent value="financial" className="space-y-6">
+          {/* Cards de Status */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <CreditCard className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-muted-foreground">Plano Atual</p>
+                    <p className="text-xl font-bold capitalize">{financialData.plan}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
+                    <Users className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-muted-foreground">Representantes</p>
+                    <p className="text-xl font-bold">
+                      {linkedRepresentatives.length} / {financialData.maxRepresentatives}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                    financialData.paymentStatus === 'paid' ? 'bg-green-100' : 'bg-red-100'
+                  }`}>
+                    {financialData.paymentStatus === 'paid' ? (
+                      <CheckCircle className="w-6 h-6 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-red-600" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-muted-foreground">Pagamento</p>
+                    <p className={`text-xl font-bold ${
+                      financialData.paymentStatus === 'paid' ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {financialData.paymentStatus === 'paid' ? 'Em dia' : 'Atrasado'}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Configurações do Plano */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Configurações do Plano</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="plan">Plano da Importadora</Label>
+                  <Select
+                    value={financialData.plan}
+                    onValueChange={(value) =>
+                      setFinancialData({ ...financialData, plan: value as 'free' | 'basic' | 'pro' })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free">🆓 Free</SelectItem>
+                      <SelectItem value="basic">📦 Básico</SelectItem>
+                      <SelectItem value="pro">⭐ Pro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {financialData.plan === 'free' && 'Plano gratuito com recursos limitados'}
+                    {financialData.plan === 'basic' && 'Plano básico para pequenas operações'}
+                    {financialData.plan === 'pro' && 'Plano completo com todos os recursos'}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="paymentStatus">Status de Pagamento</Label>
+                  <Select
+                    value={financialData.paymentStatus}
+                    onValueChange={(value) =>
+                      setFinancialData({ ...financialData, paymentStatus: value as 'paid' | 'overdue' })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="paid">✅ Em dia</SelectItem>
+                      <SelectItem value="overdue">⚠️ Atrasado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {financialData.paymentStatus === 'paid' && 'Pagamento em dia, todos os recursos ativos'}
+                    {financialData.paymentStatus === 'overdue' && 'Pagamento atrasado, recursos podem ser limitados'}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Limites */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Limites e Cotas</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="maxRepresentatives">Número de Representantes</Label>
+                  <Input
+                    id="maxRepresentatives"
+                    type="number"
+                    value={financialData.maxRepresentatives}
+                    onChange={(e) =>
+                      setFinancialData({ ...financialData, maxRepresentatives: e.target.value })
+                    }
+                    placeholder="10"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Atual: {linkedRepresentatives.length} de {financialData.maxRepresentatives} representantes vinculados
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="maxProcessesPerMonth">Processos por Mês</Label>
+                  <Input
+                    id="maxProcessesPerMonth"
+                    type="number"
+                    value={financialData.maxProcessesPerMonth}
+                    onChange={(e) =>
+                      setFinancialData({ ...financialData, maxProcessesPerMonth: e.target.value })
+                    }
+                    placeholder="100"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Limite mensal de processos/pedidos que podem ser criados
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end pt-4">
+                <Button
+                  onClick={handleSaveFinancial}
+                  className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  Salvar Alterações
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Representantes Vinculadas */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Representantes Vinculadas</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {linkedRepresentatives.length > 0 ? (
+                <div className="space-y-3">
+                  {linkedRepresentatives.map((rep) => (
+                    <div
+                      key={rep.id}
+                      className="flex flex-col gap-2 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="w-10 h-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Users className="w-5 h-5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{rep.name}</p>
+                          <p className="text-sm text-muted-foreground truncate">{rep.email}</p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={rep.status === 'active' ? 'default' : 'secondary'}
+                        className={`self-start sm:self-center ${rep.status === 'active' ? 'bg-green-600' : ''}`}
+                      >
+                        {rep.status === 'active' ? 'Ativa' : 'Pendente'}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center mb-3">
+                    <Users className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-lg mb-1">Nenhuma representante vinculada</h3>
+                  <p className="text-sm text-muted-foreground">
+                    As representantes aparecerão aqui quando forem associadas a esta importadora
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Dialog de Upload de Catálogo */}
+      <Dialog open={showCatalogUploadDialog} onOpenChange={setShowCatalogUploadDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Upload de Catálogo PDF</DialogTitle>
+            <DialogDescription>
+              A IA lê cada página e cadastra os produtos automaticamente, recortando a foto de cada um
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="border-2 border-dashed rounded-lg p-8 text-center space-y-4">
+              <div className="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+                <FileText className="w-8 h-8 text-primary" />
+              </div>
+              {uploadedFileName ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">{uploadedFileName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Arquivo pronto para processar
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setUploadedFileName(null);
+                      setUploadedFile(null);
+                    }}
+                  >
+                    <X className="w-4 h-4 mr-1" />
+                    Remover
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <p className="text-sm font-medium mb-1">
+                      Arraste o PDF aqui ou clique para selecionar
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Apenas arquivos PDF são aceitos
+                    </p>
+                  </div>
+                  <Input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileUpload}
+                    className="max-w-xs mx-auto"
+                  />
+                </>
+              )}
+            </div>
+            <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+              <p className="text-sm font-medium">O que será extraído por IA:</p>
+              <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Código (REF), título e detalhes de cada produto</li>
+                <li>Preço unitário, quantidade por caixa, material e dimensões</li>
+                <li>A foto de cada produto, recortada da página automaticamente</li>
+              </ul>
+              <p className="text-xs text-muted-foreground pt-1">
+                O processamento envia cada página para análise e pode levar alguns instantes. Você pode revisar e ajustar os produtos depois.
+              </p>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+              <div className="space-y-1">
+                <Label htmlFor="update-existing-products" className="text-sm font-medium">
+                  Atualizar produtos já cadastrados
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Produtos com o mesmo código (REF) são sempre ignorados. Ative para,
+                  em vez de ignorar, atualizar os dados deles com o novo catálogo.
+                </p>
+              </div>
+              <Switch
+                id="update-existing-products"
+                checked={updateExistingProducts}
+                onCheckedChange={setUpdateExistingProducts}
+                disabled={catalogProcessing}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCatalogUploadDialog(false);
+                setUploadedFileName(null);
+                setUploadedFile(null);
+                setCatalogProgress(null);
+              }}
+              disabled={catalogProcessing}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleProcessCatalog}
+              disabled={!uploadedFile || catalogProcessing}
+              className="bg-primary hover:bg-primary/90"
+            >
+              {catalogProcessing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2" />
+              )}
+              {catalogProcessing
+                ? catalogProgress
+                  ? `Processando página ${catalogProgress.currentPage} de ${catalogProgress.totalPages}...`
+                  : 'Processando...'
+                : 'Processar Catálogo'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Adicionar/Editar Produto */}
+      <Dialog
+        open={showProductDialog}
+        onOpenChange={(open) => {
+          setShowProductDialog(open);
+          if (!open) resetProductImageDraft();
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden sm:max-w-4xl">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>
+              {editingProduct ? 'Editar Produto' : 'Adicionar Produto'}
+            </DialogTitle>
+            <DialogDescription>
+              {editingProduct
+                ? 'Atualize as informações do produto'
+                : 'Adicione um novo produto ao catálogo'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-4 py-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="code">Código do Produto *</Label>
+                <Input
+                  id="code"
+                  value={productFormData.code}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, code: e.target.value })
+                  }
+                  placeholder="Ex: CRS-2625"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="productName">Nome do Produto *</Label>
+                <Input
+                  id="productName"
+                  value={productFormData.name}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, name: e.target.value })
+                  }
+                  placeholder="Ex: Garfo de Mesa"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="category">Categoria</Label>
+                <Input
+                  id="category"
+                  value={productFormData.category}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, category: e.target.value })
+                  }
+                  placeholder="Ex: Madras"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="price">Preço (R$) *</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  step="0.01"
+                  value={productFormData.price}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, price: e.target.value })
+                  }
+                  placeholder="8.75"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="quantityPerBox">Quantidade por Caixa</Label>
+                <Input
+                  id="quantityPerBox"
+                  type="number"
+                  value={productFormData.quantityPerBox}
+                  onChange={(e) =>
+                    setProductFormData({
+                      ...productFormData,
+                      quantityPerBox: e.target.value,
+                    })
+                  }
+                  placeholder="100"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="unitsPerPackage">Unidades por Sacola</Label>
+                <Input
+                  id="unitsPerPackage"
+                  type="number"
+                  value={productFormData.unitsPerPackage}
+                  onChange={(e) =>
+                    setProductFormData({
+                      ...productFormData,
+                      unitsPerPackage: e.target.value,
+                    })
+                  }
+                  placeholder="6"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="material">Material</Label>
+                <Input
+                  id="material"
+                  value={productFormData.material}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, material: e.target.value })
+                  }
+                  placeholder="Ex: Madeira e metal"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="dimensions">Dimensões</Label>
+                <Input
+                  id="dimensions"
+                  value={productFormData.dimensions}
+                  onChange={(e) =>
+                    setProductFormData({
+                      ...productFormData,
+                      dimensions: e.target.value,
+                    })
+                  }
+                  placeholder="Ex: 27x8 cm"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="description">Descrição</Label>
+                <Textarea
+                  id="description"
+                  value={productFormData.description}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, description: e.target.value })
+                  }
+                  placeholder="Texto completo do produto (ex.: composição, embalagem, observações do catálogo)"
+                  rows={4}
+                  className="resize-y min-h-[5rem]"
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="detalhe">Detalhe</Label>
+                <Input
+                  id="detalhe"
+                  value={productFormData.detalhe}
+                  onChange={(e) =>
+                    setProductFormData({ ...productFormData, detalhe: e.target.value })
+                  }
+                  placeholder="Ex: Cores sortidas"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Detalhe curto (linha extra na vitrine). A descrição acima é o texto principal do produto.
+                </p>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="productPhoto">Foto do produto</Label>
+                <div className="flex flex-col sm:flex-row gap-4 items-start">
+                  <div className="w-full sm:w-40 h-40 rounded-lg border bg-muted/30 overflow-hidden flex items-center justify-center shrink-0">
+                    {productImagePreview ? (
+                      <ImageWithFallback
+                        src={productImagePreview}
+                        alt="Pré-visualização do produto"
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-1 p-2 text-muted-foreground">
+                        <ImageIcon className="w-8 h-8 opacity-60" />
+                        <span className="text-xs text-center">Nenhuma foto</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground">
+                      JPEG, PNG, WebP ou GIF. Máximo 5 MB. A foto aparece no catálogo para representantes e
+                      clientes.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="secondary" size="sm" asChild>
+                        <label htmlFor="productPhoto" className="cursor-pointer">
+                          <Upload className="w-4 h-4 mr-2" />
+                          Escolher arquivo
+                        </label>
+                      </Button>
+                      <input
+                        id="productPhoto"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="sr-only"
+                        onChange={handleProductImageFileChange}
+                      />
+                      {(productImagePreview || (editingProduct?.image && !productImageRemoved)) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRemoveProductImage}
+                        >
+                          <X className="w-4 h-4 mr-2" />
+                          Remover foto
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Status de Publicação */}
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+                <div className="space-y-0.5">
+                  <Label htmlFor="published" className="text-base">
+                    Publicar Produto
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {productFormData.published
+                      ? 'Produto visível no catálogo para representantes e clientes'
+                      : 'Produto oculto, apenas visível para administradores'}
+                  </p>
+                </div>
+                <Switch
+                  id="published"
+                  checked={productFormData.published}
+                  onCheckedChange={(checked) =>
+                    setProductFormData({
+                      ...productFormData,
+                      published: checked,
+                      outOfStock: checked ? productFormData.outOfStock : false,
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between rounded-lg bg-muted/50 p-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="outOfStock" className="text-base">
+                    Produto esgotado
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {productFormData.published
+                      ? productFormData.outOfStock
+                        ? 'Visível no catálogo, mas sem permitir adicionar ao carrinho'
+                        : 'Produto disponível para pedido no catálogo'
+                      : 'Disponível apenas para produtos publicados'}
+                  </p>
+                </div>
+                <Switch
+                  id="outOfStock"
+                  checked={productFormData.outOfStock}
+                  disabled={!productFormData.published}
+                  onCheckedChange={(checked) =>
+                    setProductFormData({ ...productFormData, outOfStock: checked })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="shrink-0 w-full flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
+            {editingProduct && (
+              <Button
+                variant="destructive"
+                onClick={() => confirmDeleteProduct(editingProduct)}
+                className="w-full sm:mr-auto sm:w-auto"
+              >
+                <Trash2 className="h-4 w-4 shrink-0 sm:mr-2" />
+                Excluir produto
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setShowProductDialog(false)}
+              className="w-full sm:w-auto"
+              disabled={productSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveProduct}
+              className="w-full bg-primary hover:bg-primary/90 sm:w-auto"
+              disabled={productSaving}
+            >
+              {productSaving ? 'Salvando…' : editingProduct ? 'Atualizar' : 'Adicionar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Confirmação de Exclusão de Produto */}
+      <Dialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          setShowDeleteDialog(open);
+          if (!open) setDeletingProduct(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir o produto{' '}
+              <span className="font-semibold text-foreground">
+                {deletingProduct?.code} - {deletingProduct?.name}
+              </span>
+              ?
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleDeleteProduct} variant="destructive">
+              Sim, Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={bulkDeleteMode !== null}
+        onOpenChange={(open) => {
+          if (!open && !bulkDeleting) setBulkDeleteMode(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {bulkDeleteMode === 'all'
+                ? 'Excluir todo o catálogo?'
+                : 'Excluir produtos selecionados?'}
+            </DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita</DialogDescription>
+          </DialogHeader>
+          <div className="py-4 text-sm text-muted-foreground space-y-2">
+            {bulkDeleteMode === 'all' ? (
+              <p>
+                Todos os produtos desta importadora serão removidos, inclusive os que não aparecem
+                no resultado da busca atual.
+              </p>
+            ) : (
+              <p>
+                Você está prestes a excluir{' '}
+                <span className="font-semibold text-foreground">{selectedProductIds.size}</span>{' '}
+                produto(s).
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkDeleteMode(null)}
+              disabled={bulkDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmBulkDelete} disabled={bulkDeleting}>
+              {bulkDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Confirmar exclusão'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Confirmação de Exclusão da Importadora */}
+      <Dialog open={showDeleteImporterDialog} onOpenChange={setShowDeleteImporterDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão da Importadora</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir a importadora{' '}
+              <span className="font-semibold text-foreground">{importer.name}</span>?
+              Todos os produtos associados serão removidos.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteImporterDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleDeleteImporter} variant="destructive">
+              Sim, Excluir Importadora
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Zoom da Imagem */}
+      <Dialog open={showImageZoomDialog} onOpenChange={setShowImageZoomDialog}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Visualização da Imagem</DialogTitle>
+            <DialogDescription>
+              Imagem em tamanho ampliado
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {zoomedImage && (
+              <ImageWithFallback
+                src={zoomedImage}
+                alt="Produto em zoom"
+                className="w-full h-auto rounded-lg"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};

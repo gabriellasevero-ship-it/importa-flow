@@ -1,0 +1,771 @@
+import React, { useEffect, useState } from 'react';
+import { Search, Plus, UserCheck, UserX, Clock, Building2, Mail, Phone, FileText, User, Trash2 } from 'lucide-react';
+import { Button } from '@/app/components/ui/button';
+import { Card, CardContent } from '@/app/components/ui/card';
+import { Input } from '@/app/components/ui/input';
+import { Badge } from '@/app/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/app/components/ui/dialog';
+import { Label } from '@/app/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/app/components/ui/select';
+import { toast } from 'sonner';
+import { cn } from '@/app/components/ui/utils';
+import type { Representative, RepresentativeStatus } from '@/services/representantes';
+import {
+  fetchRepresentatives,
+  createRepresentative,
+  updateRepresentative,
+  updateRepresentativeStatus,
+  deleteRepresentative,
+  sendRepresentativeInvite,
+} from '@/services/representantes';
+import { isSupabaseConfigured } from '@/lib/supabase';
+import { useImportadoras } from '@/hooks/useData';
+
+function messageFromUnknownError(e: unknown): string {
+  if (e instanceof Error && e.message.trim()) return e.message.trim();
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = (e as { message: unknown }).message;
+    if (typeof m === 'string' && m.trim()) return m.trim();
+  }
+  return '';
+}
+
+const statusConfig = {
+  active: {
+    label: 'Ativa',
+    color: 'bg-green-600',
+    icon: UserCheck,
+    textColor: 'text-green-700',
+    bgColor: 'bg-green-50',
+  },
+  pending: {
+    label: 'Pendente',
+    color: 'bg-yellow-600',
+    icon: Clock,
+    textColor: 'text-yellow-700',
+    bgColor: 'bg-yellow-50',
+  },
+  suspended: {
+    label: 'Suspensa',
+    color: 'bg-red-600',
+    icon: UserX,
+    textColor: 'text-red-700',
+    bgColor: 'bg-red-50',
+  },
+};
+
+export const Representatives: React.FC = () => {
+  const {
+    importadoras,
+    loading: loadingImportadoras,
+    error: importadorasError,
+    refetch: refetchImportadoras,
+  } = useImportadoras();
+  const [representatives, setRepresentatives] = useState<Representative[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RepresentativeStatus | 'all'>('all');
+  const [showDialog, setShowDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [editingRepresentative, setEditingRepresentative] = useState<Representative | null>(null);
+  const [deletingRepresentative, setDeletingRepresentative] = useState<Representative | null>(null);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+
+  const [loading, setLoading] = useState(false);
+
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    cpf: '',
+    cnpj: '',
+    company: '',
+    importerId: '',
+    status: 'pending' as RepresentativeStatus,
+  });
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchRepresentatives();
+        setRepresentatives(data);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível carregar os representantes.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, []);
+
+  const handleAdd = () => {
+    void refetchImportadoras();
+    setEditingRepresentative(null);
+    setFormData({
+      name: '',
+      email: '',
+      phone: '',
+      cpf: '',
+      cnpj: '',
+      company: '',
+      importerId: '',
+      status: 'pending',
+    });
+    setShowDialog(true);
+  };
+
+  const handleEdit = (representative: Representative) => {
+    void refetchImportadoras();
+    setEditingRepresentative(representative);
+    setFormData({
+      name: representative.name,
+      email: representative.email,
+      phone: representative.phone,
+      cpf: representative.cpf,
+      cnpj: representative.cnpj || '',
+      company: representative.company || '',
+      importerId: representative.importerId || '',
+      status: representative.status,
+    });
+    setShowDialog(true);
+  };
+
+  const handleSave = () => {
+    if (!formData.name || !formData.email || !formData.phone || !formData.cpf) {
+      toast.error('Preencha todos os campos obrigatórios');
+      return;
+    }
+
+    const save = async () => {
+      try {
+        setLoading(true);
+        if (editingRepresentative) {
+          const updated = await updateRepresentative(editingRepresentative.id, {
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            cpf: formData.cpf,
+            cnpj: formData.cnpj || undefined,
+            company: formData.company || undefined,
+            importerId: formData.importerId || undefined,
+            status: formData.status,
+          });
+          setRepresentatives((prev) =>
+            prev.map((r) => (r.id === updated.id ? updated : r))
+          );
+          toast.success('Representante atualizado com sucesso!');
+        } else {
+          const created = await createRepresentative({
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            cpf: formData.cpf,
+            cnpj: formData.cnpj || undefined,
+            company: formData.company || undefined,
+            importerId: formData.importerId || undefined,
+            status: formData.status,
+          });
+          if (isSupabaseConfigured()) {
+            try {
+              await sendRepresentativeInvite(created.id);
+              setRepresentatives((prev) => [created, ...prev]);
+              toast.success(
+                'Representante cadastrado! Enviamos um e-mail com link mágico para acessar a plataforma (sem precisar criar senha).'
+              );
+            } catch (inviteErr) {
+              console.error(inviteErr);
+              setRepresentatives((prev) => [created, ...prev]);
+              const inviteDetail = messageFromUnknownError(inviteErr);
+              toast.error(
+                inviteDetail
+                  ? `Representante salvo, mas o convite não foi enviado: ${inviteDetail}`
+                  : 'Representante salvo, mas o convite por e-mail falhou. Verifique a função invite-representative no Supabase e as URLs de redirecionamento.'
+              );
+            }
+          } else {
+            setRepresentatives((prev) => [created, ...prev]);
+            toast.success('Representante cadastrado com sucesso!');
+          }
+        }
+        setShowDialog(false);
+      } catch (e) {
+        console.error(e);
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível salvar o representante. ${detail}`
+            : 'Não foi possível salvar o representante.'
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void save();
+  };
+
+  const confirmDelete = (representative: Representative) => {
+    setDeletingRepresentative(representative);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDelete = () => {
+    if (!deletingRepresentative) return;
+
+    const run = async () => {
+      try {
+        setLoading(true);
+        await deleteRepresentative(deletingRepresentative.id);
+        setRepresentatives((prev) =>
+          prev.filter((r) => r.id !== deletingRepresentative.id)
+        );
+        toast.success('Representante excluído com sucesso!');
+        setShowDialog(false);
+        setShowDeleteDialog(false);
+        setEditingRepresentative(null);
+        setDeletingRepresentative(null);
+      } catch (e) {
+        console.error(e);
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível excluir o representante. ${detail}`
+            : 'Não foi possível excluir o representante.'
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
+  };
+
+  const handleStatusChange = (id: string, newStatus: RepresentativeStatus) => {
+    const run = async () => {
+      try {
+        setLoading(true);
+        const updated = await updateRepresentativeStatus(id, newStatus);
+        setRepresentatives((prev) =>
+          prev.map((r) => (r.id === updated.id ? updated : r))
+        );
+        const statusLabel = statusConfig[newStatus].label;
+        toast.success(`Status alterado para ${statusLabel}`);
+      } catch (e) {
+        console.error(e);
+        toast.error('Não foi possível alterar o status.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
+  };
+
+  const handleResendInvite = (rep: Representative) => {
+    void (async () => {
+      try {
+        setResendingInviteId(rep.id);
+        await sendRepresentativeInvite(rep.id);
+        toast.success(`Convite reenviado para ${rep.email}.`);
+      } catch (e) {
+        console.error(e);
+        const detail = messageFromUnknownError(e);
+        toast.error(
+          detail
+            ? `Não foi possível reenviar o convite: ${detail}`
+            : 'Não foi possível reenviar o convite.'
+        );
+      } finally {
+        setResendingInviteId(null);
+      }
+    })();
+  };
+
+  const filteredRepresentatives = representatives.filter((rep) => {
+    const matchesSearch =
+      rep.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      rep.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      rep.cpf.includes(searchTerm) ||
+      (rep.company && rep.company.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesStatus = statusFilter === 'all' || rep.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const stats = {
+    active: representatives.filter((r) => r.status === 'active').length,
+    pending: representatives.filter((r) => r.status === 'pending').length,
+    suspended: representatives.filter((r) => r.status === 'suspended').length,
+  };
+
+  return (
+    <div className="space-y-6 min-w-0 overflow-x-hidden">
+      {/* Header */}
+      <div>
+        <h2 className="mb-2">Representantes</h2>
+        <p className="text-muted-foreground">
+          Gerencie os representantes cadastrados na plataforma
+        </p>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
+              <UserCheck className="w-6 h-6 text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Ativos</p>
+              <p className="text-2xl font-bold">{stats.active}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-yellow-100 flex items-center justify-center">
+              <Clock className="w-6 h-6 text-yellow-600" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Pendentes</p>
+              <p className="text-2xl font-bold">{stats.pending}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-red-100 flex items-center justify-center">
+              <UserX className="w-6 h-6 text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Suspensos</p>
+              <p className="text-2xl font-bold">{stats.suspended}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
+        <div className="relative min-w-0 flex-1 sm:min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome, e-mail, CPF ou empresa..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <div className="w-full shrink-0 sm:w-[200px]">
+          <Select value={statusFilter} onValueChange={(value: any) => setStatusFilter(value)}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent position="popper" className="z-[100]">
+              <SelectItem value="all">Todos os status</SelectItem>
+              <SelectItem value="active">Ativa</SelectItem>
+              <SelectItem value="pending">Pendente</SelectItem>
+              <SelectItem value="suspended">Suspensa</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          onClick={handleAdd}
+          className="w-full shrink-0 bg-primary hover:bg-primary/90 sm:w-auto"
+        >
+          <Plus className="w-4 h-4 shrink-0 sm:mr-2" />
+          <span className="sm:hidden">Adicionar</span>
+          <span className="hidden sm:inline">Adicionar Representante</span>
+        </Button>
+      </div>
+
+      {/* Representatives List */}
+      {loading && representatives.length === 0 && (
+        <Card className="p-12">
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+              <User className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <p className="text-muted-foreground">
+              Carregando representantes...
+            </p>
+          </div>
+        </Card>
+      )}
+      {!loading && filteredRepresentatives.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4">
+          {filteredRepresentatives.map((rep) => {
+            const StatusIcon = statusConfig[rep.status].icon;
+            return (
+              <Card key={rep.id} className="hover:shadow-md transition-shadow">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-3">
+                      {/* Header com Nome e Status */}
+                      <div className="flex items-start gap-3">
+                        <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                          <User className="w-6 h-6 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <h3 className="font-semibold truncate">{rep.name}</h3>
+                            <Badge
+                              className={`${statusConfig[rep.status].color} text-white`}
+                            >
+                              <StatusIcon className="w-3 h-3 mr-1" />
+                              {statusConfig[rep.status].label}
+                            </Badge>
+                          </div>
+                          {rep.company && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                              <Building2 className="w-3 h-3" />
+                              {rep.company}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Informações de Contato */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Mail className="w-4 h-4 shrink-0" />
+                          <span className="truncate">{rep.email}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Phone className="w-4 h-4 shrink-0" />
+                          <span>{rep.phone}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <FileText className="w-4 h-4 shrink-0" />
+                          <span>CPF: {rep.cpf}</span>
+                        </div>
+                        {rep.cnpj && (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <FileText className="w-4 h-4 shrink-0" />
+                            <span>CNPJ: {rep.cnpj}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Vendas Totais */}
+                      {rep.totalSales && (
+                        <div className="pt-2 border-t">
+                          <p className="text-sm text-muted-foreground">
+                            Vendas totais:{' '}
+                            <span className="font-semibold text-foreground">
+                              {new Intl.NumberFormat('pt-BR', {
+                                style: 'currency',
+                                currency: 'BRL',
+                              }).format(rep.totalSales)}
+                            </span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ações */}
+                    <div className="flex w-full flex-col gap-2 border-t pt-4 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 sm:border-0 sm:pt-0">
+                      {isSupabaseConfigured() && !rep.userId && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={resendingInviteId === rep.id}
+                          onClick={() => handleResendInvite(rep)}
+                          className="w-full whitespace-nowrap sm:w-auto"
+                        >
+                          <Mail className="w-3.5 h-3.5 mr-1.5 shrink-0" />
+                          {resendingInviteId === rep.id ? 'Enviando…' : 'Reenviar convite'}
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleEdit(rep)}
+                        className="w-full sm:w-auto"
+                      >
+                        Editar
+                      </Button>
+                      <Select
+                        value={rep.status}
+                        onValueChange={(value: RepresentativeStatus) =>
+                          handleStatusChange(rep.id, value)
+                        }
+                      >
+                        <SelectTrigger
+                          className={cn(
+                            "w-full sm:w-[140px]",
+                            rep.status === 'active' && "bg-green-50 border-green-200 text-green-700 hover:bg-green-100",
+                            rep.status === 'pending' && "bg-yellow-50 border-yellow-200 text-yellow-700 hover:bg-yellow-100",
+                            rep.status === 'suspended' && "bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+                          )}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="z-[100]">
+                          <SelectItem value="active">Ativar</SelectItem>
+                          <SelectItem value="pending">Pendente</SelectItem>
+                          <SelectItem value="suspended">Suspender</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      ) : !loading ? (
+        <Card className="p-12">
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
+              <User className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg">Nenhum representante encontrado</h3>
+            <p className="text-muted-foreground max-w-sm mx-auto">
+              {searchTerm || statusFilter !== 'all'
+                ? 'Tente buscar com outros termos ou altere os filtros'
+                : 'Comece adicionando seu primeiro representante'}
+            </p>
+            {!searchTerm && statusFilter === 'all' && (
+              <Button onClick={handleAdd} className="bg-primary hover:bg-primary/90 mt-4">
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar Representante
+              </Button>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
+      {/* Dialog de Adicionar/Editar */}
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingRepresentative ? 'Editar Representante' : 'Adicionar Representante'}
+            </DialogTitle>
+            <DialogDescription>
+              {editingRepresentative
+                ? 'Atualize as informações do representante'
+                : 'Cadastre um novo representante na plataforma'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Nome Completo *</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Ex: Ana Silva"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="email">E-mail *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="email@exemplo.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="phone">Telefone *</Label>
+                <Input
+                  id="phone"
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  placeholder="(11) 98765-4321"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="cpf">CPF *</Label>
+                <Input
+                  id="cpf"
+                  value={formData.cpf}
+                  onChange={(e) => setFormData({ ...formData, cpf: e.target.value })}
+                  placeholder="123.456.789-00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cnpj">CNPJ (se aplicável)</Label>
+                <Input
+                  id="cnpj"
+                  value={formData.cnpj}
+                  onChange={(e) => setFormData({ ...formData, cnpj: e.target.value })}
+                  placeholder="12.345.678/0001-90"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="company">Empresa (se aplicável)</Label>
+              <Input
+                id="company"
+                value={formData.company}
+                onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                placeholder="Ex: AS Representações"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="importer-select">Importadora Associada (opcional)</Label>
+              <Select
+                value={formData.importerId || '__none__'}
+                onValueChange={(v) => {
+                  if (v === '__none__') {
+                    setFormData({ ...formData, importerId: '', company: '' });
+                  } else {
+                    const imp = importadoras.find((i) => i.id === v);
+                    setFormData({
+                      ...formData,
+                      importerId: v,
+                      company: imp?.name ?? '',
+                    });
+                  }
+                }}
+                disabled={loadingImportadoras && importadoras.length === 0}
+              >
+                <SelectTrigger id="importer-select" className="w-full">
+                  <SelectValue
+                    placeholder={
+                      loadingImportadoras && importadoras.length === 0
+                        ? 'Carregando importadoras...'
+                        : 'Selecione uma importadora...'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent position="popper" className="z-[100] max-h-[280px]">
+                  <SelectItem value="__none__">Nenhuma (representante autônoma)</SelectItem>
+                  {importadoras.map((imp) => (
+                    <SelectItem key={imp.id} value={imp.id}>
+                      <span className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />
+                        {imp.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {importadorasError && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs text-destructive">{importadorasError}</p>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => void refetchImportadoras()}
+                  >
+                    Tentar novamente
+                  </Button>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Vincule a representante a uma importadora ou deixe como autônoma
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="status">Status da Conta *</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value: RepresentativeStatus) =>
+                  setFormData({ ...formData, status: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">🟢 Ativa</SelectItem>
+                  <SelectItem value="pending">🟡 Pendente</SelectItem>
+                  <SelectItem value="suspended">🔴 Suspensa</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {formData.status === 'active' &&
+                  'Representante pode acessar o sistema e realizar vendas'}
+                {formData.status === 'pending' &&
+                  'Aguardando aprovação ou ativação pelo administrador'}
+                {formData.status === 'suspended' &&
+                  'Representante não pode acessar o sistema'}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            {editingRepresentative && (
+              <Button
+                variant="destructive"
+                onClick={() => confirmDelete(editingRepresentative)}
+                className="mr-auto"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Excluir
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setShowDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} className="bg-primary hover:bg-primary/90">
+              {editingRepresentative ? 'Atualizar' : 'Cadastrar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Confirmação de Exclusão */}
+      <Dialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          setShowDeleteDialog(open);
+          if (!open) setDeletingRepresentative(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir o representante{' '}
+              <span className="font-semibold text-foreground">
+                {deletingRepresentative?.name ?? editingRepresentative?.name}
+              </span>
+              ? Todos os dados e histórico de vendas serão mantidos, mas o acesso será removido.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleDelete} variant="destructive">
+              Sim, Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};

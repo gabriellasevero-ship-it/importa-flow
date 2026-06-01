@@ -1,0 +1,129 @@
+name: Backup para repositório espelho
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Diário às 06:00 UTC (03:00 horário de Brasília)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-backup
+  cancel-in-progress: false
+
+env:
+  BACKUP_OWNER: gabriellasevero-ship-it
+  BACKUP_REPO_NAME: importa-flow-backup
+
+jobs:
+  mirror-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout com histórico completo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validar token e permissão de escrita no backup
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$BACKUP_TOKEN" ]; then
+            echo "::error::Secret BACKUP_REPO_TOKEN não configurado."
+            exit 1
+          fi
+
+          HTTP_CODE=$(curl -s -o /tmp/repo-check.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${BACKUP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${BACKUP_OWNER}/${BACKUP_REPO_NAME}")
+
+          echo "Resposta da API GitHub para ${BACKUP_OWNER}/${BACKUP_REPO_NAME}: HTTP ${HTTP_CODE}"
+
+          case "$HTTP_CODE" in
+            200)
+              PUSH_PERM=$(python3 -c "import json; print(json.load(open('/tmp/repo-check.json')).get('permissions', {}).get('push', False))")
+              echo "Permissão de push no backup: ${PUSH_PERM}"
+              if [ "$PUSH_PERM" != "True" ]; then
+                echo "::error::Token consegue LER o repo, mas não tem permissão de ESCRITA (push)."
+                echo "::error::Classic token: marque scope 'repo'. Fine-grained: Contents → Read and write."
+                exit 1
+              fi
+              ;;
+            401)
+              echo "::error::Token inválido ou expirado."
+              exit 1
+              ;;
+            404)
+              echo "::error::Repositório não encontrado ou token sem acesso."
+              exit 1
+              ;;
+            403)
+              echo "::error::Token sem permissão suficiente."
+              exit 1
+              ;;
+            *)
+              echo "::error::Erro inesperado (HTTP ${HTTP_CODE})."
+              cat /tmp/repo-check.json || true
+              exit 1
+              ;;
+          esac
+
+          curl -sI -H "Authorization: Bearer ${BACKUP_TOKEN}" https://api.github.com/user | grep -i x-oauth-scopes || true
+
+      - name: Espelhar branches e tags no repositório de backup
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          REPO_PATH="${BACKUP_OWNER}/${BACKUP_REPO_NAME}"
+          BACKUP_REMOTE="https://github.com/${REPO_PATH}.git"
+
+          git remote remove backup 2>/dev/null || true
+          git remote add backup "$BACKUP_REMOTE"
+
+          push_with_auth() {
+            local label="$1"
+            shift
+            echo "Tentando push: ${label}"
+            if "$@" 2> /tmp/git-push-error.log; then
+              return 0
+            fi
+            echo "Falhou (${label}):"
+            cat /tmp/git-push-error.log || true
+            return 1
+          }
+
+          # Método recomendado para fine-grained e classic PAT
+          if push_with_auth "Bearer token" \
+            git -c "http.extraHeader=AUTHORIZATION: bearer ${BACKUP_TOKEN}" push backup --all --force \
+            && push_with_auth "Bearer token (tags)" \
+            git -c "http.extraHeader=AUTHORIZATION: bearer ${BACKUP_TOKEN}" push backup --tags --force; then
+            echo "Backup concluído com sucesso."
+            exit 0
+          fi
+
+          if push_with_auth "usuário + token" \
+            git push "https://${GITHUB_OWNER}:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git" --all --force \
+            && push_with_auth "usuário + token (tags)" \
+            git push "https://${GITHUB_OWNER}:${BACKUP_TOKEN}@github.com/${REPO_PATH}.git" --tags --force; then
+            echo "Backup concluído com sucesso."
+            exit 0
+          fi
+
+          echo "::error::Git push falhou mesmo com token válido na API."
+          echo "::error::Gere um Classic token (ghp_...) em github.com/settings/tokens/new com scope 'repo' e atualize BACKUP_REPO_TOKEN."
+          exit 128
