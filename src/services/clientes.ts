@@ -166,6 +166,14 @@ export async function updateCliente(
 }
 
 export async function deleteCliente(id: string): Promise<void> {
+  const cliente = await getCliente(id);
+  if (cliente?.name) {
+    const { error: snapshotError } = await supabase
+      .from('orders')
+      .update({ cliente_name: cliente.name })
+      .eq('cliente_id', id);
+    if (snapshotError) throw snapshotError;
+  }
   const { error } = await supabase.from('clientes').delete().eq('id', id);
   if (error) throw error;
 }

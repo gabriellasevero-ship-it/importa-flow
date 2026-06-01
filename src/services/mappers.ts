@@ -108,6 +108,7 @@ type DbOrder = {
   id: string;
   representante_id: string;
   cliente_id: string | null;
+  cliente_name?: string | null;
   importadora_id: string;
   status: string;
   total: number;
@@ -293,7 +294,7 @@ export function mapOrder(
     representanteId: row.representante_id,
     representanteName: row.profiles?.name ?? '',
     clienteId: row.cliente_id ?? undefined,
-    clienteName: row.clientes?.name ?? undefined,
+    clienteName: row.cliente_name ?? row.clientes?.name ?? undefined,
     importadoraId: row.importadora_id,
     importadoraName: row.importadoras?.name ?? '',
     items,
@@ -345,6 +346,7 @@ export function toDbOrder(o: Partial<Order> & { representanteId: string; importa
   return {
     representante_id: o.representanteId,
     cliente_id: o.clienteId ?? null,
+    cliente_name: o.clienteName ?? null,
     importadora_id: o.importadoraId,
     status: o.status ?? 'rascunho',
     total: o.total ?? 0,

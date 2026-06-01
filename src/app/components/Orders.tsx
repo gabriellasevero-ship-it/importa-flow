@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingBag, ArrowLeft, Package, DollarSign, TrendingUp, Calendar, Building, User, Download, Bell, Eye, Search, Upload, FileText, X, CheckCircle, Truck } from 'lucide-react';
+import { ShoppingBag, ArrowLeft, Package, DollarSign, TrendingUp, Calendar, Building, User, Download, Bell, Eye, Search, Upload, FileText, X, CheckCircle, Truck, Trash2 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -21,6 +21,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from '@/app/components/ui/dialog';
 import {
   DropdownMenu,
@@ -34,7 +35,7 @@ type ViewMode = 'list' | 'detail';
 type FilterType = 'all' | 'unread' | 'cliente' | 'representante';
 
 export const Orders: React.FC = () => {
-  const { orders, loading, updateOrder, refetch } = useOrders();
+  const { orders, loading, updateOrder, deleteOrder, refetch } = useOrders();
 
   useEffect(() => {
     void refetch();
@@ -52,6 +53,8 @@ export const Orders: React.FC = () => {
   const [showNotaFiscalDialog, setShowNotaFiscalDialog] = useState(false);
   const [notaFiscalNumber, setNotaFiscalNumber] = useState('');
   const [pendingStatusChange, setPendingStatusChange] = useState<{orderId: string, status: string} | null>(null);
+  const [showDeleteOrderDialog, setShowDeleteOrderDialog] = useState(false);
+  const [deletingOrder, setDeletingOrder] = useState(false);
 
   // Filtrar pedidos
   const filteredOrders = orders.filter(order => {
@@ -135,6 +138,23 @@ export const Orders: React.FC = () => {
         setPendingStatusChange(null);
         toast.success(`Pedido faturado com sucesso! Nota Fiscal: ${notaFiscalNumber}`);
       });
+    }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!selectedOrder) return;
+    setDeletingOrder(true);
+    try {
+      await deleteOrder(selectedOrder.id);
+      toast.success('Pedido excluído com sucesso.');
+      setShowDeleteOrderDialog(false);
+      setSelectedOrder(null);
+      setViewMode('list');
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir o pedido.');
+    } finally {
+      setDeletingOrder(false);
     }
   };
 
@@ -722,7 +742,18 @@ export const Orders: React.FC = () => {
                   {getOriginBadge(selectedOrder.origin)}
                   {getOrderStatusBadge(selectedOrder.status)}
                 </div>
-                <DropdownMenu>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                    onClick={() => setShowDeleteOrderDialog(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Excluir
+                  </Button>
+                  <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
@@ -745,6 +776,7 @@ export const Orders: React.FC = () => {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                </div>
               </div>
             </div>
           </div>
@@ -1151,6 +1183,29 @@ export const Orders: React.FC = () => {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDeleteOrderDialog} onOpenChange={setShowDeleteOrderDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir pedido</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir o pedido{' '}
+              <span className="font-semibold text-foreground">#{selectedOrder?.id}</span>?
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteOrderDialog(false)} disabled={deletingOrder}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteOrder} disabled={deletingOrder}>
+              {deletingOrder ? 'Excluindo...' : 'Sim, excluir'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

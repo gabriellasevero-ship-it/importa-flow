@@ -8,6 +8,7 @@ interface OrdersContextType {
   loading: boolean;
   addOrder: (order: Order, catalog?: { representanteRowId: string }) => Promise<void>;
   updateOrder: (orderId: string, updates: Partial<Order>, replaceItems?: Order['items']) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
   refetch: () => Promise<void>;
 }
 
@@ -113,8 +114,13 @@ export const OrdersProvider: React.FC<OrdersProviderProps> = ({ children }) => {
     setOrders(prev => prev.map(o => (o.id === orderId ? updated : o)));
   };
 
+  const deleteOrder = async (orderId: string) => {
+    await ordersApi.deleteOrder(orderId);
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+  };
+
   return (
-    <OrdersContext.Provider value={{ orders, loading, addOrder, updateOrder, refetch }}>
+    <OrdersContext.Provider value={{ orders, loading, addOrder, updateOrder, deleteOrder, refetch }}>
       {children}
     </OrdersContext.Provider>
   );

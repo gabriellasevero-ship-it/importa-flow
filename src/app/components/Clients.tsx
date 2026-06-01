@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Plus, Phone, Mail, Building, Search, Edit, ShoppingBag, Calendar, DollarSign, FileText, X, ArrowLeft, Package, TrendingUp, RefreshCw, Download, MapPin, Truck } from 'lucide-react';
+import { Users, Plus, Phone, Mail, Building, Search, Edit, ShoppingBag, Calendar, DollarSign, FileText, X, ArrowLeft, Package, TrendingUp, RefreshCw, Download, MapPin, Truck, Trash2 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/app/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/app/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/app/components/ui/sheet';
 import { Badge } from '@/app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
@@ -19,7 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCatalogClients } from '@/contexts/CatalogClientsContext';
 import { useOrders } from '@/contexts/OrdersContext';
 import { useClientes, useImportadoras, useCommissions, useTransportadoras } from '@/hooks/useData';
-import { createCliente } from '@/services/clientes';
+import { createCliente, deleteCliente } from '@/services/clientes';
 import { toast } from 'sonner';
 import { Cliente, Order, OrderStatus } from '@/types';
 import {
@@ -34,7 +34,7 @@ type ViewMode = 'list' | 'client-detail' | 'order-detail';
 export const Clients: React.FC = () => {
   const { user } = useAuth();
   const { catalogClients } = useCatalogClients();
-  const { orders, refetch: refetchOrders } = useOrders();
+  const { orders, refetch: refetchOrders, deleteOrder } = useOrders();
   const { clientes, refetch: refetchClientes } = useClientes();
   const { importadoras } = useImportadoras();
   const { commissions } = useCommissions();
@@ -51,6 +51,10 @@ export const Clients: React.FC = () => {
   const [showNotaFiscalDialog, setShowNotaFiscalDialog] = useState(false);
   const [notaFiscalNumber, setNotaFiscalNumber] = useState('');
   const [pendingStatusChange, setPendingStatusChange] = useState<{orderId: string, status: string} | null>(null);
+  const [showDeleteClientDialog, setShowDeleteClientDialog] = useState(false);
+  const [showDeleteOrderDialog, setShowDeleteOrderDialog] = useState(false);
+  const [deletingClient, setDeletingClient] = useState(false);
+  const [deletingOrder, setDeletingOrder] = useState(false);
   const [newClient, setNewClient] = useState({
     name: '',
     phone: '',
@@ -188,6 +192,43 @@ export const Clients: React.FC = () => {
     setSelectedClient(client);
     setEditingClient({ ...client });
     setViewMode('client-detail');
+  };
+
+  const handleDeleteClient = async () => {
+    if (!selectedClient) return;
+    setDeletingClient(true);
+    try {
+      await deleteCliente(selectedClient.id);
+      await refetchClientes();
+      await refetchOrders();
+      toast.success('Cliente excluído com sucesso. Os pedidos foram mantidos.');
+      setShowDeleteClientDialog(false);
+      setSelectedClient(null);
+      setEditingClient(null);
+      setViewMode('list');
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir o cliente.');
+    } finally {
+      setDeletingClient(false);
+    }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!selectedOrder) return;
+    setDeletingOrder(true);
+    try {
+      await deleteOrder(selectedOrder.id);
+      toast.success('Pedido excluído com sucesso.');
+      setShowDeleteOrderDialog(false);
+      setSelectedOrder(null);
+      setViewMode('client-detail');
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível excluir o pedido.');
+    } finally {
+      setDeletingOrder(false);
+    }
   };
 
   const handleSaveClient = () => {
@@ -484,11 +525,22 @@ export const Clients: React.FC = () => {
               Voltar
             </Button>
 
-            <div className="min-w-0">
-              <h2 className="text-xl font-semibold leading-tight sm:text-2xl">{selectedClient.name}</h2>
-              {selectedClient.businessName && (
-                <p className="mt-0.5 text-sm text-muted-foreground">{selectedClient.businessName}</p>
-              )}
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold leading-tight sm:text-2xl">{selectedClient.name}</h2>
+                {selectedClient.businessName && (
+                  <p className="mt-0.5 text-sm text-muted-foreground">{selectedClient.businessName}</p>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => setShowDeleteClientDialog(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Excluir cliente
+              </Button>
             </div>
 
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -876,16 +928,27 @@ export const Clients: React.FC = () => {
               Voltar para Cliente
             </Button>
 
-            <div className="space-y-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <h2 className="break-all text-xl font-semibold leading-tight sm:text-2xl">
-                  Pedido #{selectedOrder.id}
-                </h2>
-                {getOrderStatusBadge(selectedOrder.status)}
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+              <div className="space-y-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h2 className="break-all text-xl font-semibold leading-tight sm:text-2xl">
+                    Pedido #{selectedOrder.id}
+                  </h2>
+                  {getOrderStatusBadge(selectedOrder.status)}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Cliente: {selectedClient.name}
+                </p>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Cliente: {selectedClient.name}
-              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => setShowDeleteOrderDialog(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Excluir pedido
+              </Button>
             </div>
           </div>
 
@@ -1383,6 +1446,53 @@ export const Clients: React.FC = () => {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDeleteClientDialog} onOpenChange={setShowDeleteClientDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir cliente</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir o cliente{' '}
+              <span className="font-semibold text-foreground">{selectedClient?.name}</span>?
+              Os pedidos deste cliente serão mantidos na aba Pedidos.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteClientDialog(false)} disabled={deletingClient}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteClient} disabled={deletingClient}>
+              {deletingClient ? 'Excluindo...' : 'Sim, excluir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDeleteOrderDialog} onOpenChange={setShowDeleteOrderDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir pedido</DialogTitle>
+            <DialogDescription>Esta ação não pode ser desfeita.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir o pedido{' '}
+              <span className="font-semibold text-foreground">#{selectedOrder?.id}</span>?
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteOrderDialog(false)} disabled={deletingOrder}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteOrder} disabled={deletingOrder}>
+              {deletingOrder ? 'Excluindo...' : 'Sim, excluir'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
