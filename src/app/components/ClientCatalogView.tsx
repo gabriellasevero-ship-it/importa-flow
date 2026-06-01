@@ -202,6 +202,7 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
       selectedImportadoras,
       selectedCategory,
       selectedSubcategory,
+      dbCategories: categoriesList,
     })
   );
 

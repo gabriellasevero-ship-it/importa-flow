@@ -1,10 +1,17 @@
 import type { Category, Product } from '@/types';
+import {
+  consolidateCategoryLabels,
+  consolidateSubcategoryLabels,
+  resolveCanonicalCategory,
+  subcategoriesMatch,
+} from '@/lib/catalogCategoryNormalize';
 
 export interface CatalogFilterState {
   searchTerm: string;
   selectedImportadoras: string[];
   selectedCategory: string;
   selectedSubcategory: string;
+  dbCategories?: readonly Pick<Category, 'name' | 'subcategories'>[];
 }
 
 /**
@@ -30,10 +37,11 @@ export function productMatchesCatalogFilters(
     return false;
   }
 
+  const dbCategories = state.dbCategories ?? [];
   const selCat = state.selectedCategory === 'all' ? 'all' : state.selectedCategory.trim();
   if (selCat !== 'all') {
-    const pCat = (product.category ?? '').trim();
-    if (pCat !== selCat) return false;
+    const productCategory = resolveCanonicalCategory(product.category ?? '', dbCategories);
+    if (productCategory !== selCat) return false;
   }
 
   // Com "Todas as categorias", não filtra por subcategoria (evita sumir produto por estado do select)
@@ -46,7 +54,7 @@ export function productMatchesCatalogFilters(
   const productSub = product.subcategory?.trim();
   if (!productSub) return true;
 
-  return productSub === selSub;
+  return subcategoriesMatch(productSub, selSub);
 }
 
 /** Produtos ativos no escopo dos filtros de importadora (sem busca/categoria). */
@@ -66,25 +74,21 @@ export function catalogProductsInScope(
   });
 }
 
-/** Categorias disponíveis no catálogo: distintas dos produtos + cadastro em categories. */
+/** Categorias disponíveis no catálogo, consolidadas e alinhadas ao cadastro. */
 export function getCatalogCategoryOptions(
   products: readonly Product[],
   selectedImportadoras: readonly string[],
   dbCategories: readonly Pick<Category, 'name'>[] = []
 ): string[] {
-  const names = new Set<string>();
+  const rawLabels: string[] = [];
   for (const product of catalogProductsInScope(products, selectedImportadoras)) {
     const category = (product.category ?? '').trim();
-    if (category) names.add(category);
+    if (category) rawLabels.push(category);
   }
-  for (const category of dbCategories) {
-    const name = category.name.trim();
-    if (name) names.add(name);
-  }
-  return [...names].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return consolidateCategoryLabels(rawLabels, dbCategories);
 }
 
-/** Subcategorias da categoria selecionada (produtos + cadastro em categories). */
+/** Subcategorias da categoria selecionada (produtos + cadastro), sem duplicatas. */
 export function getCatalogSubcategoryOptions(
   products: readonly Product[],
   selectedImportadoras: readonly string[],
@@ -93,16 +97,19 @@ export function getCatalogSubcategoryOptions(
 ): string[] {
   if (selectedCategory === 'all') return [];
   const category = selectedCategory.trim();
-  const names = new Set<string>();
+  const rawLabels: string[] = [];
+
   const dbCategory = dbCategories.find((c) => c.name.trim() === category);
   for (const sub of dbCategory?.subcategories ?? []) {
     const label = sub.trim();
-    if (label) names.add(label);
+    if (label) rawLabels.push(label);
   }
+
   for (const product of catalogProductsInScope(products, selectedImportadoras)) {
-    if ((product.category ?? '').trim() !== category) continue;
+    if (resolveCanonicalCategory(product.category ?? '', dbCategories) !== category) continue;
     const sub = product.subcategory?.trim();
-    if (sub) names.add(sub);
+    if (sub) rawLabels.push(sub);
   }
-  return [...names].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  return consolidateSubcategoryLabels(rawLabels);
 }
