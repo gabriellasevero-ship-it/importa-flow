@@ -54,11 +54,17 @@ const QUANTIDADE_CAIXA_REGEX = /Quantidade\s*\/\s*Caixa\s*:?\s*(\d+)/i;
 
 const COVER_PROMO_REGEX = /novidades|desconto|ver[aã]o\s*\d{4}|toda\s+a\s+tabela|akash\s*imports/i;
 
+/** Preço em catálogos BR (R$) ou internacionais (US$, $, USD). */
+const CATALOG_PRICE_REGEX =
+  /(?:R\$|US\$|USD|U\$D)\s*[\d.,]+|\$\s*[\d.,]+|\b\d{1,3}(?:\.\d{3})*,\d{2}\b/i;
+
 function pageTextLooksInsufficient(text: string): boolean {
   const t = text.replace(/\s+/g, ' ').trim();
   if (t.length < 60) return true;
-  const hasPrice = /R\$\s*[\d.,]+/i.test(t);
-  const hasSku = /\b[A-Za-z]{2,}\s*[-_]\s*[A-Za-z0-9]{2,}\b/.test(t);
+  const hasPrice = CATALOG_PRICE_REGEX.test(t);
+  const hasSku =
+    /\b[A-Za-z]{2,}\s*[-_]\s*[A-Za-z0-9]{2,}\b/.test(t) ||
+    /\b[A-Za-z]{2,}\d{2,}\b/.test(t);
   if (!hasPrice && !hasSku && t.length < 280) return true;
   return false;
 }
@@ -73,9 +79,9 @@ export function isCatalogContentPage(pageText: string, pdfPageIndex: number): bo
   if (pageTextLooksInsufficient(pageText)) return false;
 
   const skus = findOrderedUniqueSkuMatches(pageText);
-  const hasPrice = /R\$\s*[\d.,]+/i.test(t);
-  const hasSku = skus.length > 0;
-  const hasProductBlock = /quantidade\s*\/\s*caixa/i.test(t);
+  const hasPrice = CATALOG_PRICE_REGEX.test(t);
+  const hasSku = skus.length > 0 || /\b[A-Za-z]{2,}\d{2,}\b/.test(t);
+  const hasProductBlock = /quantidade\s*\/\s*caixa|caixa\s*:\s*\d+\s*p[çc]/i.test(t);
 
   if (!hasSku && !hasPrice) return false;
 

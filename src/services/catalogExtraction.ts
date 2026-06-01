@@ -54,7 +54,15 @@ function getExtractCatalogPageRequestUrl(): string {
   return `${window.location.origin}/api/extract-catalog-page`;
 }
 
+let cachedAccessToken: string | null = null;
+let cachedExpiresAtMs = 0;
+
 async function getAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedAccessToken && cachedExpiresAtMs > now + 60_000) {
+    return cachedAccessToken;
+  }
+
   const { data: refreshData } = await supabase.auth.refreshSession();
   const session = refreshData.session ?? (await supabase.auth.getSession()).data.session;
   if (!session?.access_token) {
@@ -62,7 +70,51 @@ async function getAccessToken(): Promise<string> {
       'Sessão expirada. Faça login novamente para processar o catálogo.'
     );
   }
-  return session.access_token;
+  cachedAccessToken = session.access_token;
+  cachedExpiresAtMs = session.expires_at ? session.expires_at * 1000 : now + 3_600_000;
+  return cachedAccessToken;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const CLIENT_RATE_LIMIT_MAX_ATTEMPTS = 6;
+const CLIENT_RATE_LIMIT_BASE_MS = 15_000;
+
+/** Erros de configuração/sessão: não adianta pular página nem repetir. */
+export function isFatalCatalogExtractionError(err: unknown): boolean {
+  if (!(err instanceof CatalogExtractionUnavailableError)) return false;
+  const m = err.message.toLowerCase();
+  return (
+    m.includes('sessão') ||
+    m.includes('supabase não configurado') ||
+    m.includes('não autorizado') ||
+    m.includes('gemini_api_key') ||
+    m.includes('apenas administradores')
+  );
+}
+
+/**
+ * Chama a IA por página com novas tentativas em 429 (limite do Gemini).
+ * Catálogos grandes (40+ páginas) costumam estourar cota no meio do processo.
+ */
+export async function extractCatalogPageWithRetry(
+  input: ExtractCatalogPageInput
+): Promise<ExtractedCatalogProduct[]> {
+  let lastRateLimit: CatalogExtractionRateLimitError | null = null;
+  for (let attempt = 1; attempt <= CLIENT_RATE_LIMIT_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await extractCatalogPage(input);
+    } catch (err) {
+      if (err instanceof CatalogExtractionRateLimitError) {
+        lastRateLimit = err;
+        if (attempt >= CLIENT_RATE_LIMIT_MAX_ATTEMPTS) break;
+        await sleep(CLIENT_RATE_LIMIT_BASE_MS * attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastRateLimit ?? new CatalogExtractionRateLimitError('Limite de uso da IA atingido.');
 }
 
 /**

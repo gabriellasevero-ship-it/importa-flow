@@ -12,7 +12,8 @@ import { DEFAULT_CATEGORY, parseCatalogText } from '@/lib/catalogParser';
 import {
   CatalogExtractionRateLimitError,
   CatalogExtractionUnavailableError,
-  extractCatalogPage,
+  extractCatalogPageWithRetry,
+  isFatalCatalogExtractionError,
   type ExtractedCatalogProduct,
 } from '@/services/catalogExtraction';
 import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
@@ -522,6 +523,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     ocrPageCount: number;
     /** Houve produtos identificados? Distingue "0 criados" de erro. */
     foundProducts: boolean;
+    /** Páginas cuja IA falhou (erro transitório); produtos das outras páginas podem ter sido salvos. */
+    aiPagesFailed: number;
   };
 
   type CatalogDedupDecision =
@@ -598,136 +601,128 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         hadAnyImage: false,
         ocrPageCount: 0,
         foundProducts: false,
-      };
-    }
-
-    const pageProducts: Array<{
-      pageIndex: number;
-      pageBlob: Blob;
-      product: ExtractedCatalogProduct;
-    }> = [];
-    for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
-      const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(async (page) => {
-          try {
-            const extracted = await extractCatalogPage({
-              imageBase64: page.base64,
-              mimeType: page.mimeType,
-              nativeText: page.nativeText,
-              categoryNames,
-              catalogContext: coverText,
-            });
-            return { page, extracted };
-          } catch (err) {
-            if (
-              err instanceof CatalogExtractionUnavailableError ||
-              err instanceof CatalogExtractionRateLimitError
-            ) {
-              throw err;
-            }
-            console.warn(`Falha ao extrair a página ${page.pageIndex + 1} do catálogo:`, err);
-            return { page, extracted: [] as ExtractedCatalogProduct[] };
-          }
-        })
-      );
-      for (const { page, extracted } of results) {
-        for (const product of extracted) {
-          pageProducts.push({ pageIndex: page.pageIndex, pageBlob: page.blob, product });
-        }
-      }
-    }
-
-    if (pageProducts.length === 0) {
-      return {
-        created: 0,
-        updated: 0,
-        uploadFailed: false,
-        skippedCount: skippedPageIndices.length,
-        skippedExisting: 0,
-        hadAnyImage: false,
-        ocrPageCount: 0,
-        foundProducts: false,
+        aiPagesFailed: 0,
       };
     }
 
     const dedup = buildCatalogDedup(updateExistingProducts);
-    const countByPage = new Map<number, number>();
-    for (const { pageIndex } of pageProducts) {
-      countByPage.set(pageIndex, (countByPage.get(pageIndex) ?? 0) + 1);
-    }
-    const slotByPage = new Map<number, number>();
     const batchId = String(Date.now());
+    const slotByPage = new Map<number, number>();
 
     let created = 0;
     let updated = 0;
     let skippedExisting = 0;
     let uploadFailed = false;
     let hadAnyImage = false;
-    for (let idx = 0; idx < pageProducts.length; idx++) {
-      const { pageIndex, pageBlob, product } = pageProducts[idx];
-      const decision = dedup(product.code, pageIndex, idx);
-      if (decision.action === 'skip') {
-        skippedExisting++;
-        continue;
-      }
+    let aiPagesFailed = 0;
+    let globalProductIdx = 0;
 
-      let blob: Blob = pageBlob;
-      if (product.box) {
-        const cropped = await cropImageBlobRect(
-          pageBlob,
-          product.box.left,
-          product.box.top,
-          product.box.right,
-          product.box.bottom
-        );
-        if (cropped) blob = cropped;
-      }
+    for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
+      const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
+      for (const page of batch) {
+        let extracted: ExtractedCatalogProduct[];
+        try {
+          extracted = await extractCatalogPageWithRetry({
+            imageBase64: page.base64,
+            mimeType: page.mimeType,
+            nativeText: page.nativeText,
+            categoryNames,
+            catalogContext: coverText,
+          });
+        } catch (err) {
+          if (
+            err instanceof CatalogExtractionRateLimitError ||
+            isFatalCatalogExtractionError(err)
+          ) {
+            throw err;
+          }
+          if (err instanceof CatalogExtractionUnavailableError) {
+            console.warn(
+              `Página ${page.pageIndex + 1} ignorada (IA indisponível nesta página):`,
+              err.message
+            );
+            aiPagesFailed++;
+            continue;
+          }
+          console.warn(`Falha ao extrair a página ${page.pageIndex + 1} do catálogo:`, err);
+          aiPagesFailed++;
+          continue;
+        }
 
-      const total = countByPage.get(pageIndex) ?? 1;
-      let productSlot: number | undefined;
-      if (total > 1) {
-        const slot = slotByPage.get(pageIndex) ?? 0;
-        productSlot = slot;
-        slotByPage.set(pageIndex, slot + 1);
-      }
+        const productsOnPage = extracted.length;
+        for (let slot = 0; slot < extracted.length; slot++) {
+          const product = extracted[slot];
+          const decision = dedup(product.code, page.pageIndex, globalProductIdx);
+          globalProductIdx++;
 
-      let imageUrl: string | undefined;
-      try {
-        imageUrl = await uploadCatalogPageImage(importer.id, pageIndex, blob, batchId, productSlot);
-        hadAnyImage = true;
-      } catch (storageErr) {
-        console.warn('Upload de imagem falhou para um produto:', storageErr);
-        uploadFailed = true;
-      }
+          if (decision.action === 'skip') {
+            skippedExisting++;
+            continue;
+          }
 
-      if (decision.action === 'update') {
-        await productsApi.updateProduct(decision.existingId, {
-          name: product.name,
-          category: product.category || undefined,
-          price: product.price,
-          minOrder: product.minOrder,
-          material: product.material || undefined,
-          dimensions: product.dimensions || undefined,
-          description: product.description || undefined,
-          image: imageUrl,
-        });
-        updated++;
-      } else {
-        await productsApi.createProduct({
-          importadoraId: importer.id,
-          code: decision.code,
-          name: product.name,
-          category: product.category || DEFAULT_CATEGORY,
-          price: product.price,
-          minOrder: product.minOrder,
-          material: product.material || undefined,
-          dimensions: product.dimensions || undefined,
-          description: product.description || undefined,
-          active: true,
-          image: imageUrl,
-        });
-        created++;
+          let blob: Blob = page.blob;
+          if (product.box) {
+            const cropped = await cropImageBlobRect(
+              page.blob,
+              product.box.left,
+              product.box.top,
+              product.box.right,
+              product.box.bottom
+            );
+            if (cropped) blob = cropped;
+          }
+
+          let productSlot: number | undefined;
+          if (productsOnPage > 1) {
+            const used = slotByPage.get(page.pageIndex) ?? 0;
+            productSlot = used;
+            slotByPage.set(page.pageIndex, used + 1);
+          }
+
+          let imageUrl: string | undefined;
+          try {
+            imageUrl = await uploadCatalogPageImage(
+              importer.id,
+              page.pageIndex,
+              blob,
+              batchId,
+              productSlot
+            );
+            hadAnyImage = true;
+          } catch (storageErr) {
+            console.warn('Upload de imagem falhou para um produto:', storageErr);
+            uploadFailed = true;
+          }
+
+          if (decision.action === 'update') {
+            await productsApi.updateProduct(decision.existingId, {
+              name: product.name,
+              category: product.category || undefined,
+              price: product.price,
+              minOrder: product.minOrder,
+              material: product.material || undefined,
+              dimensions: product.dimensions || undefined,
+              description: product.description || undefined,
+              image: imageUrl,
+            });
+            updated++;
+          } else {
+            await productsApi.createProduct({
+              importadoraId: importer.id,
+              code: decision.code,
+              name: product.name,
+              category: product.category || DEFAULT_CATEGORY,
+              price: product.price,
+              minOrder: product.minOrder,
+              material: product.material || undefined,
+              dimensions: product.dimensions || undefined,
+              description: product.description || undefined,
+              active: true,
+              image: imageUrl,
+            });
+            created++;
+          }
+        }
       }
     }
 
@@ -740,6 +735,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       hadAnyImage,
       ocrPageCount: 0,
       foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
+      aiPagesFailed,
     };
   };
 
@@ -787,6 +783,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         hadAnyImage: false,
         ocrPageCount,
         foundProducts: false,
+        aiPagesFailed: 0,
       };
     }
     const dedup = buildCatalogDedup(updateExistingProducts);
@@ -942,6 +939,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       hadAnyImage: pageBlobs.length > 0,
       ocrPageCount,
       foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
+      aiPagesFailed: 0,
     };
   };
 
@@ -955,10 +953,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         result = await runAiCatalogExtraction(uploadedFile);
       } catch (aiError) {
         if (aiError instanceof CatalogExtractionRateLimitError) {
+          await refetchProducts();
           toast.error('Limite de uso da IA atingido (429).', {
             description:
-              'Aguarde alguns minutos e tente novamente. Se persistir, verifique a cota/billing da sua chave do Gemini no Google AI Studio.',
-            duration: 12_000,
+              'Produtos já salvos antes do erro permanecem cadastrados. Aguarde alguns minutos e reenvie o catálogo (códigos existentes serão ignorados).',
+            duration: 14_000,
           });
           return;
         }
@@ -974,8 +973,26 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         }
       }
 
+      if (result.aiPagesFailed > 0) {
+        toast.warning(
+          `${result.aiPagesFailed} página(s) não foram lidas pela IA. Revise o catálogo e reenvie só as páginas faltantes, se necessário.`
+        );
+      }
+
       if (result.skippedCount > 0) {
         toast.info(`${result.skippedCount} página(s) ignorada(s) (capa ou sem produtos).`);
+      }
+
+      if (result.created === 0 && result.updated === 0 && result.skippedExisting === 0) {
+        console.warn('IA não identificou produtos; tentando método alternativo com OCR.');
+        toast.info('Tentando leitura alternativa do catálogo…', {
+          description: 'A IA não encontrou produtos; estamos usando OCR no PDF.',
+        });
+        setCatalogProgress(null);
+        result = await runHeuristicCatalogExtraction(uploadedFile);
+        if (result.skippedCount > 0) {
+          toast.info(`${result.skippedCount} página(s) ignorada(s) (capa ou sem produtos).`);
+        }
       }
 
       if (result.created === 0 && result.updated === 0) {
@@ -1025,12 +1042,21 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       }
     } catch (e) {
       console.error(e);
+      await refetchProducts();
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(
-        msg.length > 80
-          ? `Erro ao processar catálogo. Verifique o console (F12) para detalhes.`
-          : `Erro: ${msg}`
-      );
+      if (e instanceof CatalogExtractionRateLimitError) {
+        toast.error('Limite de uso da IA (429).', {
+          description:
+            'O processamento parou, mas produtos já salvos antes do erro permanecem cadastrados. Aguarde alguns minutos e reenvie o catálogo (produtos existentes serão ignorados).',
+          duration: 14_000,
+        });
+      } else {
+        toast.error(
+          msg.length > 80
+            ? `Erro ao processar catálogo. Verifique o console (F12). Produtos já salvos antes do erro permanecem cadastrados.`
+            : `Erro: ${msg} Produtos já salvos permanecem cadastrados.`
+        );
+      }
     } finally {
       setCatalogProcessing(false);
       setCatalogProgress(null);

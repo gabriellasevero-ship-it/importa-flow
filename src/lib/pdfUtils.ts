@@ -523,8 +523,11 @@ export async function cropImageBlobRect(
 function pageTextLooksInsufficient(text: string): boolean {
   const t = text.replace(/\s+/g, ' ').trim();
   if (t.length < 60) return true;
-  const hasPrice = /R\$\s*[\d.,]+/i.test(t);
-  const hasSku = /\b[A-Za-z]{2,}\s*[-_]\s*[A-Za-z0-9]{2,}\b/.test(t);
+  const hasPrice =
+    /(?:R\$|US\$|USD|U\$D)\s*[\d.,]+|\$\s*[\d.,]+|\b\d{1,3}(?:\.\d{3})*,\d{2}\b/i.test(t);
+  const hasSku =
+    /\b[A-Za-z]{2,}\s*[-_]\s*[A-Za-z0-9]{2,}\b/.test(t) ||
+    /\b[A-Za-z]{2,}\d{2,}\b/.test(t);
   if (!hasPrice && !hasSku && t.length < 280) return true;
   return false;
 }
@@ -768,6 +771,58 @@ export async function extractCatalogPagesForAi(
       height: canvas.height,
     });
     options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+  }
+
+  // PDFs só-imagem ou com layout fora do padrão: o filtro por texto nativo descarta tudo.
+  // Envia as páginas internas (pula só a capa) para a IA de visão decidir.
+  if (pages.length === 0 && numPages > 0) {
+    skippedPageIndices.length = 0;
+    for (let i = 1; i <= numPages; i++) {
+      const pdfPageIndex = i - 1;
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const nativeText = buildPageTextFromPdfItems(textContent.items);
+
+      if (numPages > 1 && pdfPageIndex === 0) {
+        skippedPageIndices.push(pdfPageIndex);
+        if (nativeText.trim()) {
+          coverTexts.push(nativeText.trim());
+        }
+        options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+        continue;
+      }
+
+      const viewport = page.getViewport({ scale: PAGE_IMAGE_SCALE });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+        continue;
+      }
+      await page.render({ canvasContext: ctx, viewport, intent: 'display' }).promise;
+
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', PAGE_IMAGE_JPEG_QUALITY);
+      });
+      if (!blob) {
+        options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+        continue;
+      }
+      const base64 = dataUrlToBase64(canvas.toDataURL('image/jpeg', PAGE_IMAGE_JPEG_QUALITY));
+
+      pages.push({
+        pageIndex: pdfPageIndex,
+        blob,
+        base64,
+        mimeType: 'image/jpeg',
+        nativeText,
+        width: canvas.width,
+        height: canvas.height,
+      });
+      options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
+    }
   }
 
   const coverText = coverTexts.join('\n').slice(0, 2_000);
