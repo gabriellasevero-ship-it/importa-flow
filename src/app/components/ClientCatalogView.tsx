@@ -31,6 +31,7 @@ import {
   getCartLineTotal,
   getUnitPrice,
 } from '@/lib/productPricing';
+import { formatOrderLabel } from '@/lib/orderDisplay';
 import { buildWhatsAppUrl } from '@/lib/whatsapp';
 import { CATALOG_PATH_UUID_RE } from '@/lib/catalogPublicPath';
 import { formatCnpjInput, onlyDigits } from '@/lib/cnpj';
@@ -1348,7 +1349,9 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                   </Button>
                 </div>
                 <div className="flex items-center justify-between mt-2">
-                  <DialogTitle>Pedido #{selectedOrderDetail.id}</DialogTitle>
+                  <DialogTitle title={selectedOrderDetail.id}>
+                    {formatOrderLabel(selectedOrderDetail.id)}
+                  </DialogTitle>
                   {getOrderStatusBadge(selectedOrderDetail.status)}
                 </div>
               </DialogHeader>
@@ -1537,7 +1540,9 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between mb-2">
                             <div>
-                              <h4 className="font-semibold">Pedido #{order.id}</h4>
+                              <p className="text-sm font-semibold" title={order.id}>
+                                {formatOrderLabel(order.id)}
+                              </p>
                               <p className="text-sm text-muted-foreground">
                                 {formatOrderDate(order.createdAt)}
                               </p>

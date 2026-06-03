@@ -4,6 +4,7 @@ import {
   supabase,
   syncAuthBeforeDbRead,
 } from '@/lib/supabase';
+import { updateProfile } from '@/services/profile';
 
 export type RepresentativeStatus = 'active' | 'pending' | 'suspended';
 
@@ -281,7 +282,15 @@ export async function updateRepresentative(
     .select()
     .single();
   if (error) throwIfMutationDeniedByRls(error);
-  return mapRepresentative(data as DbRepresentative);
+  const mapped = mapRepresentative(data as DbRepresentative);
+  if (updates.name != null && mapped.userId) {
+    try {
+      await updateProfile(mapped.userId, { name: updates.name });
+    } catch (profileErr) {
+      console.warn('Não foi possível sincronizar nome no perfil:', profileErr);
+    }
+  }
+  return mapped;
 }
 
 export async function updateRepresentativeStatus(

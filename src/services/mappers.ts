@@ -275,6 +275,14 @@ export function mapTransportadora(row: DbTransportadora): Transportadora {
   };
 }
 
+function pickRepresentanteName(
+  profiles: DbOrder['profiles'],
+  cadastroName?: string
+): string {
+  if (cadastroName?.trim()) return cadastroName.trim();
+  return profiles?.name ?? '';
+}
+
 export function mapOrderItem(item: DbOrderItem): CartItem {
   const product = mapProductFromOrderItem(item);
   return {
@@ -287,12 +295,13 @@ export function mapOrderItem(item: DbOrderItem): CartItem {
 
 export function mapOrder(
   row: DbOrder,
-  items: CartItem[]
+  items: CartItem[],
+  representanteCadastroName?: string
 ): Order {
   return {
     id: row.id,
     representanteId: row.representante_id,
-    representanteName: row.profiles?.name ?? '',
+    representanteName: pickRepresentanteName(row.profiles, representanteCadastroName),
     clienteId: row.cliente_id ?? undefined,
     clienteName: row.cliente_name ?? row.clientes?.name ?? undefined,
     importadoraId: row.importadora_id,

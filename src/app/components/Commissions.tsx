@@ -5,6 +5,7 @@ import { Progress } from '@/app/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { useOrders } from '@/contexts/OrdersContext';
 import { useImportadoras, useCommissions } from '@/hooks/useData';
+import { formatOrderLabel } from '@/lib/orderDisplay';
 import { getRepresentanteCommissionPercent } from '@/lib/representanteCommission';
 import { Badge } from '@/app/components/ui/badge';
 import { Button, buttonVariants } from '@/app/components/ui/button';
@@ -364,7 +365,9 @@ export const Commissions: React.FC = () => {
                       >
                         <div className="min-w-0 flex-1">
                           <div className="mb-1 flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-medium">Pedido #{order.id}</p>
+                            <p className="text-sm font-medium" title={order.id}>
+                              {formatOrderLabel(order.id)}
+                            </p>
                             {getOrderStatusBadge(order.status)}
                           </div>
                           <p className="text-xs text-muted-foreground">

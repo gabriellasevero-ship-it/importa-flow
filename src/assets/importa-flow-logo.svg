@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 72" fill="none" role="img" aria-label="Importa Flow">
+  <rect x="4" y="8" width="56" height="56" rx="12" fill="#5B3DF5" fill-opacity="0.12"/>
+  <rect x="18" y="22" width="28" height="24" rx="4" stroke="#5B3DF5" stroke-width="4"/>
+  <path d="M18 30h28" stroke="#5B3DF5" stroke-width="4" stroke-linecap="round"/>
+  <path d="M32 30v16" stroke="#5B3DF5" stroke-width="4" stroke-linecap="round"/>
+  <text x="76" y="48" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#5B3DF5">Importa Flow</text>
+</svg>

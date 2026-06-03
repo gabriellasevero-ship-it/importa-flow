@@ -59,6 +59,10 @@ export async function fetchOrders(representanteId: string): Promise<Order[]> {
   if (ordersError) throw ordersError;
   if (!ordersData?.length) return [];
 
+  const representanteNames = await fetchRepresentanteNamesByUserIds(
+    ordersData.map((o) => o.representante_id as string)
+  );
+
   const orderIds = ordersData.map(o => o.id);
   const { data: itemsData, error: itemsError } = await supabase
     .from('order_items')
@@ -73,7 +77,13 @@ export async function fetchOrders(representanteId: string): Promise<Order[]> {
     itemsByOrderId.get(orderId)!.push(mapOrderItem(item as never));
   });
 
-  return ordersData.map(row => mapOrder(row as never, itemsByOrderId.get(row.id) ?? []));
+  return ordersData.map((row) =>
+    mapOrder(
+      row as never,
+      itemsByOrderId.get(row.id) ?? [],
+      representanteNames.get(row.representante_id as string)
+    )
+  );
 }
 
 export async function getOrder(id: string, representanteId?: string): Promise<Order | null> {
@@ -94,13 +104,21 @@ export async function getOrder(id: string, representanteId?: string): Promise<Or
   }
   if (!orderRow) return null;
 
+  const representanteNames = await fetchRepresentanteNamesByUserIds([
+    orderRow.representante_id as string,
+  ]);
+
   const { data: itemsData, error: itemsError } = await supabase
     .from('order_items')
     .select('*, products(*, importadoras(name))')
     .eq('order_id', id);
   if (itemsError) throw itemsError;
   const items = (itemsData ?? []).map((item: Record<string, unknown>) => mapOrderItem(item as never));
-  return mapOrder(orderRow as never, items);
+  return mapOrder(
+    orderRow as never,
+    items,
+    representanteNames.get(orderRow.representante_id as string)
+  );
 }
 
 export async function createOrder(
@@ -122,6 +140,10 @@ export async function createOrder(
     .single();
   if (orderError) throw orderError;
 
+  const representanteNames = await fetchRepresentanteNamesByUserIds([
+    inserted.representante_id as string,
+  ]);
+
   const orderId = inserted.id;
   const rows = order.items.map(item => ({
     order_id: orderId,
@@ -140,7 +162,30 @@ export async function createOrder(
     .select('*, products(*, importadoras(name))')
     .eq('order_id', orderId);
   const items = (itemsData ?? []).map((i: Record<string, unknown>) => mapOrderItem(i as never));
-  return mapOrder(inserted as never, items);
+  return mapOrder(
+    inserted as never,
+    items,
+    representanteNames.get(inserted.representante_id as string)
+  );
+}
+
+async function fetchRepresentanteNamesByUserIds(
+  userIds: string[]
+): Promise<Map<string, string>> {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from('representantes')
+    .select('user_id, name')
+    .in('user_id', uniqueIds);
+  if (error) throw error;
+
+  const names = new Map<string, string>();
+  (data ?? []).forEach((row: { user_id: string | null; name: string }) => {
+    if (row.user_id) names.set(row.user_id, row.name);
+  });
+  return names;
 }
 
 export async function updateOrder(
