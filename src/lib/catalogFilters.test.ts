@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Product } from '@/types';
 import {
   consolidateCategoryLabels,
+  getEffectiveProductCategory,
   resolveCanonicalCategory,
 } from './catalogCategoryNormalize';
 import {
@@ -31,6 +32,8 @@ const dbCategories = [
   { name: 'Brinquedos' },
   { name: 'Ferramentas' },
   { name: 'Utilidades' },
+  { name: 'Mergulho' },
+  { name: 'Papelaria' },
 ];
 
 describe('resolveCanonicalCategory', () => {
@@ -47,6 +50,16 @@ describe('resolveCanonicalCategory', () => {
 
   it('mapeia brinquedo inflável para Brinquedos', () => {
     expect(resolveCanonicalCategory('Brinquedo Inflável', dbCategories)).toBe('Brinquedos');
+  });
+});
+
+describe('getEffectiveProductCategory', () => {
+  it('infere Infláveis para produto com categoria Catálogo e nome de boia', () => {
+    const product = makeProduct({
+      category: 'Catálogo',
+      name: 'Bóia Inflável Infantil Unicórnio',
+    });
+    expect(getEffectiveProductCategory(product, dbCategories)).toBe('Infláveis');
   });
 });
 
@@ -68,12 +81,13 @@ describe('consolidateCategoryLabels', () => {
 });
 
 describe('getCatalogCategoryOptions', () => {
-  it('lista categorias consolidadas dos produtos', () => {
+  it('lista só categorias cadastradas que têm produtos', () => {
     const products = [
       makeProduct({ id: '1', category: 'Bóia Inflável' }),
       makeProduct({ id: '2', category: 'Boia Inflável Infantil' }),
       makeProduct({ id: '3', category: 'Brinquedo Inflável' }),
       makeProduct({ id: '4', category: 'Ferramentas' }),
+      makeProduct({ id: '5', category: 'Catálogo', name: 'Colchão Inflável' }),
     ];
     expect(getCatalogCategoryOptions(products, [], dbCategories)).toEqual([
       'Brinquedos',
@@ -123,5 +137,23 @@ describe('productMatchesCatalogFilters', () => {
     );
     expect(filtered).toHaveLength(1);
     expect(filtered[0].category).toBe('Bóia Inflável');
+  });
+
+  it('inclui produto Catálogo quando nome indica inflável', () => {
+    const products = [
+      makeProduct({ id: '1', category: 'Catálogo', name: 'Boia Fundo do Mar' }),
+      makeProduct({ id: '2', category: 'Ferramentas', name: 'Alicate' }),
+    ];
+    const filtered = products.filter((product) =>
+      productMatchesCatalogFilters(product, {
+        searchTerm: '',
+        selectedImportadoras: [],
+        selectedCategory: 'Infláveis',
+        selectedSubcategory: 'all',
+        dbCategories,
+      })
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].name).toContain('Boia');
   });
 });

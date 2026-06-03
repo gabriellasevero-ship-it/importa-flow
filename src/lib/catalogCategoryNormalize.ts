@@ -1,9 +1,32 @@
-import type { Category } from '@/types';
+import type { Category, Product } from '@/types';
+import { inferCategoryFromCatalog } from '@/lib/catalogParser';
 
 const MIN_DB_MATCH_SCORE = 55;
 
+const GENERIC_CATEGORY_KEYS = new Set(['', 'catalogo', 'sem categoria']);
+
+/** Palavras-chave do produto que indicam família de categoria cadastrada. */
+const DOMAIN_CATEGORY_HINTS: { re: RegExp; prefer: string[] }[] = [
+  {
+    re: /\binflav|\bboia\b|\bboias\b|colchao infl|bola infl|piscina infl|flutuador/i,
+    prefer: ['Infláveis', 'Brinquedos', 'Piscina', 'Lazer'],
+  },
+  {
+    re: /\bbrinquedo|\bboneca\b|\bboneco\b|\bjogo\b/i,
+    prefer: ['Brinquedos', 'Infláveis'],
+  },
+  {
+    re: /\bferramenta|\balicate|\bchave\b|\bfuradeira|\bparafuso/i,
+    prefer: ['Ferramentas', 'Construção'],
+  },
+  {
+    re: /\bmergulho|\bmaskara\b|\bóculos de mergulho/i,
+    prefer: ['Mergulho', 'Piscina', 'Esporte'],
+  },
+];
+
 function stripDiacritics(value: string): string {
-  return value.normalize('NFD').replace(/\p{M}/gu, '');
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 /** Chave para comparar categorias ignorando acentos e caixa. */
@@ -32,23 +55,56 @@ function wordsShareStem(a: string, b: string, minLen = 4): boolean {
   return a.slice(0, stemLen) === b.slice(0, stemLen);
 }
 
+function domainBoost(productCategory: string, dbName: string): number {
+  const pool = normalizeCategoryKey(productCategory);
+  const dbKey = normalizeCategoryKey(dbName);
+  let best = 0;
+  for (const hint of DOMAIN_CATEGORY_HINTS) {
+    if (!hint.re.test(pool)) continue;
+    for (let i = 0; i < hint.prefer.length; i++) {
+      const preferKey = normalizeCategoryKey(hint.prefer[i]);
+      if (preferKey !== dbKey && !dbKey.includes(preferKey)) continue;
+      best = Math.max(best, 90 - i * 5);
+    }
+  }
+  return best;
+}
+
 function scoreDbCategoryMatch(productCategory: string, dbName: string): number {
   const productKey = normalizeCategoryKey(productCategory);
   const dbKey = normalizeCategoryKey(dbName);
   if (!productKey || !dbKey) return 0;
   if (productKey === dbKey) return 100;
 
+  let score = 0;
   const productGroup = normalizeCategoryGroupKey(productCategory);
   const dbGroup = normalizeCategoryGroupKey(dbName);
-  if (productGroup === dbGroup) return 95;
-  if (productGroup.startsWith(dbGroup) || dbGroup.startsWith(productGroup)) return 88;
+  if (productGroup === dbGroup) score = Math.max(score, 95);
+  if (productGroup.startsWith(dbGroup) || dbGroup.startsWith(productGroup)) {
+    score = Math.max(score, 88);
+  }
+  if (productKey.startsWith(dbKey) || dbKey.startsWith(productKey)) {
+    score = Math.max(score, 85);
+  }
+  if (productKey.includes(dbKey) || dbKey.includes(productKey)) {
+    score = Math.max(score, 72);
+  }
 
-  if (productKey.startsWith(dbKey) || dbKey.startsWith(productKey)) return 85;
-  if (productKey.includes(dbKey) || dbKey.includes(productKey)) return 72;
+  const productWords = productKey.split(' ').filter(Boolean);
+  const dbWords = dbKey.split(' ').filter(Boolean);
 
-  const productWords = productKey.split(' ');
-  const dbWords = dbKey.split(' ');
-  let score = 0;
+  const firstWord = productWords[0];
+  if (
+    firstWord &&
+    singularizePortugueseWord(firstWord) === singularizePortugueseWord(dbKey)
+  ) {
+    score = Math.max(score, 96);
+  }
+  for (const productWord of productWords) {
+    if (singularizePortugueseWord(productWord) === singularizePortugueseWord(dbKey)) {
+      score = Math.max(score, 94);
+    }
+  }
   for (const productWord of productWords) {
     if (productWord.length < 4) continue;
     for (const dbWord of dbWords) {
@@ -64,7 +120,39 @@ function scoreDbCategoryMatch(productCategory: string, dbName: string): number {
       }
     }
   }
-  return score;
+
+  return Math.max(score, domainBoost(productCategory, dbName));
+}
+
+/**
+ * Categoria usada no filtro do catálogo: cadastro + consolidação + inferência por nome
+ * quando o produto ficou com "Catálogo" ou rótulo granular da IA.
+ */
+export function getEffectiveProductCategory(
+  product: Pick<Product, 'category' | 'name' | 'material'>,
+  dbCategories: readonly Pick<Category, 'name'>[] = []
+): string {
+  const raw = (product.category ?? '').trim();
+  const dbNames = dbCategories.map((c) => c.name.trim()).filter(Boolean);
+
+  if (raw && !GENERIC_CATEGORY_KEYS.has(normalizeCategoryKey(raw))) {
+    return resolveCanonicalCategory(raw, dbCategories);
+  }
+
+  if (dbNames.length > 0) {
+    const inferred = inferCategoryFromCatalog(
+      product.name,
+      product.material ?? '',
+      dbNames
+    );
+    const resolved = resolveCanonicalCategory(inferred, dbCategories);
+    if (!GENERIC_CATEGORY_KEYS.has(normalizeCategoryKey(resolved))) {
+      return resolved;
+    }
+  }
+
+  if (raw) return resolveCanonicalCategory(raw, dbCategories);
+  return '';
 }
 
 function pickPreferredLabel(

@@ -2,6 +2,7 @@ import type { Category, Product } from '@/types';
 import {
   consolidateCategoryLabels,
   consolidateSubcategoryLabels,
+  getEffectiveProductCategory,
   resolveCanonicalCategory,
   subcategoriesMatch,
 } from '@/lib/catalogCategoryNormalize';
@@ -40,7 +41,7 @@ export function productMatchesCatalogFilters(
   const dbCategories = state.dbCategories ?? [];
   const selCat = state.selectedCategory === 'all' ? 'all' : state.selectedCategory.trim();
   if (selCat !== 'all') {
-    const productCategory = resolveCanonicalCategory(product.category ?? '', dbCategories);
+    const productCategory = getEffectiveProductCategory(product, dbCategories);
     if (productCategory !== selCat) return false;
   }
 
@@ -80,11 +81,28 @@ export function getCatalogCategoryOptions(
   selectedImportadoras: readonly string[],
   dbCategories: readonly Pick<Category, 'name'>[] = []
 ): string[] {
-  const rawLabels: string[] = [];
-  for (const product of catalogProductsInScope(products, selectedImportadoras)) {
-    const category = (product.category ?? '').trim();
-    if (category) rawLabels.push(category);
+  const inScope = catalogProductsInScope(products, selectedImportadoras);
+  const dbNames = dbCategories.map((c) => c.name.trim()).filter(Boolean);
+
+  const effective = inScope
+    .map((product) => getEffectiveProductCategory(product, dbCategories))
+    .filter(Boolean);
+
+  if (dbNames.length > 0) {
+    const fromRegistry = dbNames.filter((dbName) => effective.includes(dbName));
+    if (fromRegistry.length > 0) {
+      return fromRegistry.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
   }
+
+  const uniqueEffective = [...new Set(effective)];
+  if (uniqueEffective.length > 0) {
+    return consolidateCategoryLabels(uniqueEffective, dbCategories);
+  }
+
+  const rawLabels = inScope
+    .map((p) => (p.category ?? '').trim())
+    .filter(Boolean);
   return consolidateCategoryLabels(rawLabels, dbCategories);
 }
 
@@ -106,7 +124,7 @@ export function getCatalogSubcategoryOptions(
   }
 
   for (const product of catalogProductsInScope(products, selectedImportadoras)) {
-    if (resolveCanonicalCategory(product.category ?? '', dbCategories) !== category) continue;
+    if (getEffectiveProductCategory(product, dbCategories) !== category) continue;
     const sub = product.subcategory?.trim();
     if (sub) rawLabels.push(sub);
   }

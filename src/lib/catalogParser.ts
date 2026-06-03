@@ -258,7 +258,7 @@ function stripSkuFromText(text: string, sku: string): string {
 }
 
 function stripDiacritics(s: string): string {
-  return s.normalize('NFD').replace(/\u0300-\u036f/g, '');
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 const CATEGORY_KEYWORD_HINTS: { re: RegExp; hints: string[] }[] = [
@@ -273,6 +273,14 @@ const CATEGORY_KEYWORD_HINTS: { re: RegExp; hints: string[] }[] = [
   {
     re: /ferramenta|parafuso|furadeira|serra|martelo|chave\b/i,
     hints: ['Ferramentas', 'Construção', 'Jardim'],
+  },
+  {
+    re: /inflav|\bboia\b|\bboias\b|colch[aã]o infl|bola infl|flutuador|piscina infl/i,
+    hints: ['Infláveis', 'Brinquedos', 'Piscina', 'Lazer'],
+  },
+  {
+    re: /mergulho|mascara de mergulho|óculos de mergulho/i,
+    hints: ['Mergulho', 'Piscina', 'Esporte'],
   },
 ];
 
