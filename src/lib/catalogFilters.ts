@@ -3,7 +3,7 @@ import {
   consolidateCategoryLabels,
   consolidateSubcategoryLabels,
   getEffectiveProductCategory,
-  resolveCanonicalCategory,
+  normalizeCategoryKey,
   subcategoriesMatch,
 } from '@/lib/catalogCategoryNormalize';
 
@@ -88,22 +88,32 @@ export function getCatalogCategoryOptions(
     .map((product) => getEffectiveProductCategory(product, dbCategories))
     .filter(Boolean);
 
+  const rawLabels = inScope
+    .map((p) => (p.category ?? '').trim())
+    .filter(Boolean);
+
+  let consolidated = consolidateCategoryLabels(
+    effective.length > 0 ? effective : rawLabels,
+    dbCategories
+  ).filter((label) => Boolean(normalizeCategoryKey(label)));
+
+  if (consolidated.length > 1) {
+    consolidated = consolidated.filter(
+      (label) => normalizeCategoryKey(label) !== 'catalogo'
+    );
+  }
+
   if (dbNames.length > 0) {
-    const fromRegistry = dbNames.filter((dbName) => effective.includes(dbName));
+    const canonicalSet = new Set(effective);
+    const fromRegistry = dbNames.filter(
+      (dbName) => canonicalSet.has(dbName) || consolidated.includes(dbName)
+    );
     if (fromRegistry.length > 0) {
       return fromRegistry.sort((a, b) => a.localeCompare(b, 'pt-BR'));
     }
   }
 
-  const uniqueEffective = [...new Set(effective)];
-  if (uniqueEffective.length > 0) {
-    return consolidateCategoryLabels(uniqueEffective, dbCategories);
-  }
-
-  const rawLabels = inScope
-    .map((p) => (p.category ?? '').trim())
-    .filter(Boolean);
-  return consolidateCategoryLabels(rawLabels, dbCategories);
+  return consolidated;
 }
 
 /** Subcategorias da categoria selecionada (produtos + cadastro), sem duplicatas. */

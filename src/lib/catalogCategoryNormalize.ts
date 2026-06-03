@@ -5,6 +5,43 @@ const MIN_DB_MATCH_SCORE = 55;
 
 const GENERIC_CATEGORY_KEYS = new Set(['', 'catalogo', 'sem categoria']);
 
+/**
+ * Famílias padrão quando a tabela categories está vazia ou o rótulo da IA não bate no cadastro.
+ * Ordem importa: entradas mais específicas primeiro (ex.: Brinquedos antes de Infláveis).
+ */
+const BUILTIN_CATEGORY_FAMILIES: { label: string; re: RegExp }[] = [
+  { label: 'Brinquedos', re: /^brinquedo\b|\bbrinquedos\b/i },
+  { label: 'Ferramentas', re: /\bferramenta|\balicate|\bfuradeira|\bparafuso\b/i },
+  { label: 'Mergulho', re: /\bmergulho|\bmaskara de mergulho|\boculos de mergulho/i },
+  { label: 'Papelaria', re: /\bpapelaria|\bcaderno|\bestojo\b/i },
+  { label: 'Utilidades', re: /\butilidade|\butilidades\b/i },
+  {
+    label: 'Infláveis',
+    re: /\binflav|\bboia\b|\bboias\b|artigos infl|colchao infl|bola infl|flutuador|piscina infl/i,
+  },
+];
+
+/** Nomes usados na inferência por nome do produto quando não há cadastro no banco. */
+export const BUILTIN_CATEGORY_LABELS = BUILTIN_CATEGORY_FAMILIES.map((f) => f.label);
+
+function resolveBuiltinFamily(rawCategory: string): string | null {
+  const key = normalizeCategoryKey(rawCategory);
+  if (!key || GENERIC_CATEGORY_KEYS.has(key)) return null;
+  for (const family of BUILTIN_CATEGORY_FAMILIES) {
+    if (family.re.test(key)) return family.label;
+  }
+  return null;
+}
+
+function pickDbNameForBuiltin(
+  builtinLabel: string,
+  dbCategories: readonly Pick<Category, 'name'>[]
+): string {
+  const target = normalizeCategoryKey(builtinLabel);
+  const match = dbCategories.find((c) => normalizeCategoryKey(c.name) === target);
+  return match?.name.trim() ?? builtinLabel;
+}
+
 /** Palavras-chave do produto que indicam família de categoria cadastrada. */
 const DOMAIN_CATEGORY_HINTS: { re: RegExp; prefer: string[] }[] = [
   {
@@ -133,7 +170,10 @@ export function getEffectiveProductCategory(
   dbCategories: readonly Pick<Category, 'name'>[] = []
 ): string {
   const raw = (product.category ?? '').trim();
-  const dbNames = dbCategories.map((c) => c.name.trim()).filter(Boolean);
+  const dbNames =
+    dbCategories.length > 0
+      ? dbCategories.map((c) => c.name.trim()).filter(Boolean)
+      : BUILTIN_CATEGORY_LABELS;
 
   if (raw && !GENERIC_CATEGORY_KEYS.has(normalizeCategoryKey(raw))) {
     return resolveCanonicalCategory(raw, dbCategories);
@@ -198,6 +238,10 @@ export function resolveCanonicalCategory(
     }
   }
   if (bestDb && bestScore >= MIN_DB_MATCH_SCORE) return bestDb;
+
+  const builtin = resolveBuiltinFamily(raw);
+  if (builtin) return pickDbNameForBuiltin(builtin, dbCategories);
+
   return raw;
 }
 
@@ -213,7 +257,9 @@ export function consolidateCategoryLabels(
     if (!trimmed) continue;
 
     const resolved = resolveCanonicalCategory(trimmed, dbCategories);
-    const groupKey = normalizeCategoryKey(resolved);
+    const groupKey =
+      normalizeCategoryKey(resolved) ||
+      normalizeCategoryKey(resolveBuiltinFamily(trimmed) ?? trimmed);
 
     const existing = groups.get(groupKey);
     if (existing) {

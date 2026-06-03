@@ -81,6 +81,21 @@ describe('consolidateCategoryLabels', () => {
 });
 
 describe('getCatalogCategoryOptions', () => {
+  it('consolida famílias embutidas sem cadastro no banco', () => {
+    const products = [
+      makeProduct({ id: '1', category: 'Bóia Inflável' }),
+      makeProduct({ id: '2', category: 'Boia Inflável Infantil' }),
+      makeProduct({ id: '3', category: 'Artigos Infláveis' }),
+      makeProduct({ id: '4', category: 'Brinquedo Inflável' }),
+      makeProduct({ id: '5', category: 'Ferramentas' }),
+    ];
+    expect(getCatalogCategoryOptions(products, [], [])).toEqual([
+      'Brinquedos',
+      'Ferramentas',
+      'Infláveis',
+    ]);
+  });
+
   it('lista só categorias cadastradas que têm produtos', () => {
     const products = [
       makeProduct({ id: '1', category: 'Bóia Inflável' }),
