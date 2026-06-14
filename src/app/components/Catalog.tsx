@@ -16,6 +16,7 @@ import { useImportadoras, useCategories, useProducts, useClientes } from '@/hook
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { resolveRepresentativeForCatalogShare } from '@/services/representantes';
+import { buildCatalogShareMessage, shareCatalog } from '@/lib/catalogShare';
 import { ImageSearchDialog } from '@/app/components/ImageSearchDialog';
 import { ImageWithFallback } from '@/app/components/ui/image';
 import { ProductCardAddToCart } from '@/app/components/ProductCardAddToCart';
@@ -116,28 +117,6 @@ export const Catalog: React.FC<CatalogProps> = ({
   );
 
   const handleGenerateLink = async () => {
-    const copyToClipboard = async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success('Link do catálogo copiado para área de transferência!');
-      } catch {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-999999px';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        try {
-          document.execCommand('copy');
-          toast.success('Link do catálogo copiado para área de transferência!');
-        } catch {
-          toast.error('Não foi possível copiar o link');
-        }
-        document.body.removeChild(textArea);
-      }
-    };
-
     if (!user?.id) {
       toast.error('Faça login para gerar o link do catálogo.');
       return;
@@ -151,9 +130,17 @@ export const Catalog: React.FC<CatalogProps> = ({
         );
         return;
       }
+
       const suffix = Math.random().toString(36).substring(2, 9);
       const link = `${window.location.origin}/catalogo/${rep.id}/${suffix}`;
-      await copyToClipboard(link);
+      const message = buildCatalogShareMessage(rep.name, link);
+      const result = await shareCatalog(message);
+
+      if (result === 'copied') {
+        toast.success('Mensagem e link do catálogo copiados para área de transferência!');
+      } else if (result === 'failed') {
+        toast.error('Não foi possível compartilhar o catálogo. Tente novamente.');
+      }
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível gerar o link. Tente novamente.');
@@ -838,7 +825,7 @@ export const Catalog: React.FC<CatalogProps> = ({
           <DialogHeader>
             <DialogTitle>Compartilhar Catálogo</DialogTitle>
             <DialogDescription>
-              Gere um link para compartilhar o catálogo com seus clientes. Eles poderão visualizar produtos e fazer pedidos.
+              Compartilhe o catálogo com seus clientes. Enviamos junto a imagem do Importa Flow, uma mensagem de apresentação e o link para visualizar produtos e fazer pedidos.
             </DialogDescription>
           </DialogHeader>
           
@@ -868,7 +855,7 @@ export const Catalog: React.FC<CatalogProps> = ({
                 className="w-full flex-1 bg-primary hover:bg-primary/90"
               >
                 <LinkIcon className="mr-2 h-4 w-4" />
-                Gerar e Copiar Link
+                Compartilhar Catálogo
               </Button>
             </div>
           </div>

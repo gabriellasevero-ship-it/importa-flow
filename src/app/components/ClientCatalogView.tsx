@@ -93,8 +93,10 @@ export const ClientCatalogView: React.FC<ClientCatalogViewProps> = ({ linkId, re
           phone: r.phone,
         });
       })
-      .catch(() => {
-        /* sem Supabase, RLS ou rede: mantém estado atual */
+      .catch((error) => {
+        // Sem Supabase, RLS bloqueando leitura anon ou rede: mantém o estado atual.
+        // Logamos para diagnosticar quando o nome da representante não carrega no link.
+        console.error('Não foi possível carregar a representante do catálogo:', error);
       });
 
     return () => {
