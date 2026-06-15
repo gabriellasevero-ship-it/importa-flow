@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/apresentacao", "destination": "/apresentacao.html" },
     { "source": "/catalogo/:path*", "destination": "/index.html" },
     { "source": "/pedido/:path*", "destination": "/index.html" },
     { "source": "/definir-senha", "destination": "/index.html" }
