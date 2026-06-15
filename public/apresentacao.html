@@ -437,6 +437,32 @@
       color: #FFD88A;
     }
 
+    .restart-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 32px;
+      padding: 14px 28px;
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.15s ease;
+    }
+
+    .restart-btn:hover {
+      background: #6B4FF7;
+      transform: translateY(-1px);
+    }
+
+    .restart-btn:active {
+      transform: translateY(0);
+    }
+
     .nav-hint {
       position: fixed;
       bottom: 20px;
@@ -929,6 +955,9 @@
         </svg>
         <h1 style="font-size:36px; max-width:none;">Construir a rede.<br>Depois, monetizar.</h1>
         <p class="subtitle" style="margin: 20px auto 0;">Obrigado.</p>
+        <button type="button" class="restart-btn" id="restart-btn" aria-label="Reiniciar apresentação">
+          ↺ Reiniciar apresentação
+        </button>
       </div>
       <span class="slide-number">20 / 20</span>
     </section>
@@ -977,6 +1006,8 @@
       const diff = touchStartX - e.changedTouches[0].clientX;
       if (Math.abs(diff) > 50) diff > 0 ? next() : prev();
     });
+
+    document.getElementById('restart-btn').addEventListener('click', () => show(0));
 
     show(0);
   </script>
