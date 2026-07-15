@@ -1,6 +1,10 @@
+// Deve rodar antes do pdf.js: navegadores sem Uint8Array.toHex quebram o fingerprint.
+import { installUint8ArrayCompat } from '@/lib/uint8ArrayCompat';
+installUint8ArrayCompat();
+
 import * as pdfjsLib from 'pdfjs-dist';
-// Worker para processamento em background (evita travar a UI)
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+// Worker próprio com o mesmo polyfill (o MD5 do fingerprint roda no worker).
+import pdfjsWorker from '@/lib/pdf.worker?worker&url';
 import {
   findOrderedUniqueSkuMatches,
   isCatalogContentPage,
