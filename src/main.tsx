@@ -1,3 +1,5 @@
+// Polyfill cedo: pdf.js 5.4+ usa Uint8Array.toHex no fingerprint do PDF.
+import "@/lib/uint8ArrayCompat";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import App from "./app/App.tsx";
