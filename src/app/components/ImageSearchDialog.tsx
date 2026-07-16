@@ -9,6 +9,11 @@ import {
   DialogDescription,
 } from '@/app/components/ui/dialog';
 import { toast } from 'sonner';
+import {
+  extractSearchTermFromOcrText,
+  isOcrMemoryError,
+  recognizeTextFromImage,
+} from '@/lib/imageOcr';
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -85,24 +90,35 @@ export const ImageSearchDialog: React.FC<ImageSearchDialogProps> = ({
 
     setIsProcessing(true);
     try {
-      const Tesseract = (await import('tesseract.js')).default;
-      const result = await Tesseract.recognize(selectedFile, 'por+eng', {
-        logger: () => {}, // silenciar logs no console
-      });
-      const text = (result.data.text || '').trim().replace(/\s+/g, ' ');
+      // Redimensiona antes do OCR e libera o worker — fotos grandes estouravam memória no navegador.
+      const text = await recognizeTextFromImage(selectedFile);
       if (!text) {
-        toast.error('Nenhum texto encontrado na imagem. Tente uma foto mais nítida ou com código/nome visível.');
-        setIsProcessing(false);
+        toast.error(
+          'Nenhum texto encontrado na imagem. Tente uma foto mais nítida ou com código/nome visível.'
+        );
         return;
       }
-      // Usar as primeiras palavras como termo de busca (evitar textos longos)
-      const searchTerm = text.split(/\s+/).slice(0, 6).join(' ').trim();
+      const searchTerm = extractSearchTermFromOcrText(text);
+      if (!searchTerm) {
+        toast.error(
+          'Nenhum texto encontrado na imagem. Tente uma foto mais nítida ou com código/nome visível.'
+        );
+        return;
+      }
       onSearch(searchTerm);
       toast.success('Texto da imagem reconhecido. Buscando no catálogo...');
       handleClose(false);
     } catch (err) {
       console.error(err);
-      toast.error('Erro ao processar a imagem. Tente outra imagem.');
+      if (err instanceof Error && err.message === 'OCR_TIMEOUT') {
+        toast.error('A leitura da imagem demorou demais. Tente uma foto mais próxima do código ou nome.');
+      } else if (isOcrMemoryError(err)) {
+        toast.error(
+          'Falta memória no aparelho para processar esta imagem. Feche outras abas e tente uma foto mais leve ou aproximada do código/nome.'
+        );
+      } else {
+        toast.error('Erro ao processar a imagem. Tente outra imagem.');
+      }
     } finally {
       setIsProcessing(false);
     }
