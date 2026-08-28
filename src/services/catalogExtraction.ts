@@ -77,8 +77,10 @@ async function getAccessToken(): Promise<string> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const CLIENT_RATE_LIMIT_MAX_ATTEMPTS = 6;
-const CLIENT_RATE_LIMIT_BASE_MS = 15_000;
+const CLIENT_RATE_LIMIT_MAX_ATTEMPTS = 5;
+/** Backoff mais curto: catálogos grandes não devem ficar minutos idle por página. */
+const CLIENT_RATE_LIMIT_BASE_MS = 8_000;
+const CLIENT_RATE_LIMIT_MAX_MS = 45_000;
 
 /** Erros de configuração/sessão: não adianta pular página nem repetir. */
 export function isFatalCatalogExtractionError(err: unknown): boolean {
@@ -108,7 +110,8 @@ export async function extractCatalogPageWithRetry(
       if (err instanceof CatalogExtractionRateLimitError) {
         lastRateLimit = err;
         if (attempt >= CLIENT_RATE_LIMIT_MAX_ATTEMPTS) break;
-        await sleep(CLIENT_RATE_LIMIT_BASE_MS * attempt);
+        const waitMs = Math.min(CLIENT_RATE_LIMIT_BASE_MS * attempt, CLIENT_RATE_LIMIT_MAX_MS);
+        await sleep(waitMs);
         continue;
       }
       throw err;
