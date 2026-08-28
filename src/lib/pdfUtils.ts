@@ -701,9 +701,27 @@ export type ExtractCatalogPagesForAiOptions = {
   onPageProcessed?: (progress: { currentPage: number; totalPages: number }) => void;
 };
 
-function dataUrlToBase64(dataUrl: string): string {
-  const comma = dataUrl.indexOf(',');
-  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+/** Converte Blob em base64 (sem prefixo data:) — evita re-encode JPEG via toDataURL. */
+export async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function canvasToJpegBlobAndBase64(
+  canvas: HTMLCanvasElement
+): Promise<{ blob: Blob; base64: string } | null> {
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', PAGE_IMAGE_JPEG_QUALITY);
+  });
+  if (!blob) return null;
+  const base64 = await blobToBase64(blob);
+  return { blob, base64 };
 }
 
 /**
@@ -756,19 +774,16 @@ export async function extractCatalogPagesForAi(
     }
     await page.render({ canvasContext: ctx, viewport, intent: 'display' }).promise;
 
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, 'image/jpeg', PAGE_IMAGE_JPEG_QUALITY);
-    });
-    if (!blob) {
+    const encoded = await canvasToJpegBlobAndBase64(canvas);
+    if (!encoded) {
       options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
       continue;
     }
-    const base64 = dataUrlToBase64(canvas.toDataURL('image/jpeg', PAGE_IMAGE_JPEG_QUALITY));
 
     pages.push({
       pageIndex: pdfPageIndex,
-      blob,
-      base64,
+      blob: encoded.blob,
+      base64: encoded.base64,
       mimeType: 'image/jpeg',
       nativeText,
       width: canvas.width,
@@ -807,19 +822,16 @@ export async function extractCatalogPagesForAi(
       }
       await page.render({ canvasContext: ctx, viewport, intent: 'display' }).promise;
 
-      const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, 'image/jpeg', PAGE_IMAGE_JPEG_QUALITY);
-      });
-      if (!blob) {
+      const encoded = await canvasToJpegBlobAndBase64(canvas);
+      if (!encoded) {
         options?.onPageProcessed?.({ currentPage: i, totalPages: numPages });
         continue;
       }
-      const base64 = dataUrlToBase64(canvas.toDataURL('image/jpeg', PAGE_IMAGE_JPEG_QUALITY));
 
       pages.push({
         pageIndex: pdfPageIndex,
-        blob,
-        base64,
+        blob: encoded.blob,
+        base64: encoded.base64,
         mimeType: 'image/jpeg',
         nativeText,
         width: canvas.width,

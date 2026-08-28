@@ -41,7 +41,7 @@ export async function getProduct(id: string): Promise<Product | null> {
   return data ? mapProduct(data) : null;
 }
 
-export async function createProduct(input: {
+export type CreateProductInput = {
   importadoraId: string;
   code: string;
   name: string;
@@ -59,58 +59,49 @@ export async function createProduct(input: {
   detalhe2?: string;
   detalhe3?: string;
   dimensions?: string;
-}): Promise<Product> {
-  assertSupabaseConfigured();
+};
 
-  const { data, error } = await supabase
-    .from('products')
-    .insert({
-      importadora_id: input.importadoraId,
-      code: input.code,
-      name: input.name,
-      description: input.description ?? null,
-      price: input.price,
-      min_order: input.minOrder,
-      category: input.category,
-      subcategory: input.subcategory ?? null,
-      image: input.image ?? null,
-      observations: input.observations ?? null,
-      active: input.active ?? true,
-      out_of_stock: input.outOfStock ?? false,
-      material: input.material ?? null,
-      detalhe1: input.detalhe1 ?? null,
-      detalhe2: input.detalhe2 ?? null,
-      detalhe3: input.detalhe3 ?? null,
-      dimensions: input.dimensions ?? null,
-    })
-    .select('*, importadoras(name)')
-    .single();
-  if (error) throw error;
-  return mapProduct(data);
+export type UpdateProductInput = Partial<{
+  name: string;
+  description: string;
+  price: number;
+  minOrder: number;
+  category: string;
+  subcategory: string;
+  image: string | null;
+  observations: string;
+  active: boolean;
+  outOfStock: boolean;
+  material: string;
+  detalhe1: string;
+  detalhe2: string;
+  detalhe3: string;
+  dimensions: string;
+}>;
+
+function toProductInsertRow(input: CreateProductInput) {
+  return {
+    importadora_id: input.importadoraId,
+    code: input.code,
+    name: input.name,
+    description: input.description ?? null,
+    price: input.price,
+    min_order: input.minOrder,
+    category: input.category,
+    subcategory: input.subcategory ?? null,
+    image: input.image ?? null,
+    observations: input.observations ?? null,
+    active: input.active ?? true,
+    out_of_stock: input.outOfStock ?? false,
+    material: input.material ?? null,
+    detalhe1: input.detalhe1 ?? null,
+    detalhe2: input.detalhe2 ?? null,
+    detalhe3: input.detalhe3 ?? null,
+    dimensions: input.dimensions ?? null,
+  };
 }
 
-export async function updateProduct(
-  id: string,
-  updates: Partial<{
-    name: string;
-    description: string;
-    price: number;
-    minOrder: number;
-    category: string;
-    subcategory: string;
-    image: string | null;
-    observations: string;
-    active: boolean;
-    outOfStock: boolean;
-    material: string;
-    detalhe1: string;
-    detalhe2: string;
-    detalhe3: string;
-    dimensions: string;
-  }>
-): Promise<Product> {
-  assertSupabaseConfigured();
-
+function toProductUpdateRow(updates: UpdateProductInput): Record<string, unknown> {
   const db: Record<string, unknown> = {};
   if (updates.name != null) db.name = updates.name;
   if (updates.description != null) db.description = updates.description;
@@ -127,6 +118,46 @@ export async function updateProduct(
   if (updates.detalhe2 != null) db.detalhe2 = updates.detalhe2;
   if (updates.detalhe3 != null) db.detalhe3 = updates.detalhe3;
   if (updates.dimensions != null) db.dimensions = updates.dimensions;
+  return db;
+}
+
+export async function createProduct(input: CreateProductInput): Promise<Product> {
+  assertSupabaseConfigured();
+
+  const { data, error } = await supabase
+    .from('products')
+    .insert(toProductInsertRow(input))
+    .select('*, importadoras(name)')
+    .single();
+  if (error) throw error;
+  return mapProduct(data);
+}
+
+const CREATE_PRODUCTS_CHUNK = 50;
+
+/**
+ * Insere vários produtos em lotes. Não faz select/join — pensado para upload
+ * de catálogo, onde só importa persistir rápido.
+ */
+export async function createProducts(inputs: CreateProductInput[]): Promise<void> {
+  if (inputs.length === 0) return;
+  assertSupabaseConfigured();
+
+  const rows = inputs.map(toProductInsertRow);
+  for (let i = 0; i < rows.length; i += CREATE_PRODUCTS_CHUNK) {
+    const chunk = rows.slice(i, i + CREATE_PRODUCTS_CHUNK);
+    const { error } = await supabase.from('products').insert(chunk);
+    if (error) throw error;
+  }
+}
+
+export async function updateProduct(
+  id: string,
+  updates: UpdateProductInput
+): Promise<Product> {
+  assertSupabaseConfigured();
+
+  const db = toProductUpdateRow(updates);
   const { data, error } = await supabase
     .from('products')
     .update(db)
@@ -135,6 +166,21 @@ export async function updateProduct(
     .single();
   if (error) throw error;
   return mapProduct(data);
+}
+
+/**
+ * Atualiza um produto sem select/join — mais rápido no upload de catálogo.
+ */
+export async function updateProductFast(
+  id: string,
+  updates: UpdateProductInput
+): Promise<void> {
+  assertSupabaseConfigured();
+
+  const db = toProductUpdateRow(updates);
+  if (Object.keys(db).length === 0) return;
+  const { error } = await supabase.from('products').update(db).eq('id', id);
+  if (error) throw error;
 }
 
 export async function deleteProduct(id: string): Promise<void> {

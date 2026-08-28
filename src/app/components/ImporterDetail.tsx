@@ -8,6 +8,7 @@ import {
   extractCatalogPagesForAi,
   extractTextAndPageImages,
 } from '@/lib/pdfUtils';
+import { asyncPool } from '@/lib/asyncPool';
 import { DEFAULT_CATEGORY, parseCatalogText } from '@/lib/catalogParser';
 import {
   CatalogExtractionRateLimitError,
@@ -18,6 +19,7 @@ import {
 } from '@/services/catalogExtraction';
 import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
 import * as productsApi from '@/services/products';
+import type { CreateProductInput, UpdateProductInput } from '@/services/products';
 import { updateImportadora } from '@/services/importadoras';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { uploadCatalogPageImage, uploadProductPhoto } from '@/services/storage';
@@ -56,6 +58,12 @@ import {
 } from '@/app/components/ui/dropdown-menu';
 
 const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/** Páginas em paralelo na IA. 2 reduz tempo sem estourar cota tão fácil quanto 3+. */
+const AI_PAGE_CONCURRENCY = 2;
+/** Uploads de imagem em paralelo por lote de persistência. */
+const CATALOG_UPLOAD_CONCURRENCY = 6;
+/** Updates individuais em paralelo (Supabase não faz multi-row update com valores distintos). */
+const CATALOG_UPDATE_CONCURRENCY = 6;
 
 interface Product {
   id: string;
@@ -144,7 +152,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   /** Quando ligado, produtos com código já cadastrado são atualizados em vez de ignorados. */
   const [updateExistingProducts, setUpdateExistingProducts] = useState(false);
   const [catalogProcessing, setCatalogProcessing] = useState(false);
-  const [catalogProgress, setCatalogProgress] = useState<{ currentPage: number; totalPages: number } | null>(null);
+  const [catalogProgress, setCatalogProgress] = useState<{
+    currentPage: number;
+    totalPages: number;
+    phase: 'render' | 'ai' | 'save';
+  } | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [productSaving, setProductSaving] = useState(false);
   const [productImageFile, setProductImageFile] = useState<File | null>(null);
@@ -576,8 +588,111 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     };
   };
 
-  /** Páginas enviadas à IA por vez. 1 (sequencial) evita estourar o limite por minuto (429) do Gemini. */
-  const AI_PAGE_CONCURRENCY = 1;
+  /**
+   * Crop + upload em paralelo e persistência em lote (insert em chunks / updates paralelos).
+   */
+  const persistCatalogProductBatch = async (
+    pending: Array<{
+      decision: Extract<CatalogDedupDecision, { action: 'create' | 'update' }>;
+      fields: {
+        name: string;
+        category: string;
+        price: number;
+        minOrder: number;
+        material: string;
+        dimensions: string;
+        description: string;
+      };
+      imageBlob: Blob;
+      pageIndex: number;
+      productSlot?: number;
+    }>,
+    batchId: string
+  ): Promise<{ created: number; updated: number; uploadFailed: boolean; hadAnyImage: boolean }> => {
+    if (pending.length === 0) {
+      return { created: 0, updated: 0, uploadFailed: false, hadAnyImage: false };
+    }
+
+    setCatalogProgress((prev) =>
+      prev
+        ? { ...prev, phase: 'save', currentPage: prev.currentPage, totalPages: prev.totalPages }
+        : { phase: 'save', currentPage: 0, totalPages: pending.length }
+    );
+
+    const uploadResults = await asyncPool(pending, CATALOG_UPLOAD_CONCURRENCY, async (item) => {
+      try {
+        const imageUrl = await uploadCatalogPageImage(
+          importer.id,
+          item.pageIndex,
+          item.imageBlob,
+          batchId,
+          item.productSlot
+        );
+        return { imageUrl, uploadFailed: false as const };
+      } catch (storageErr) {
+        console.warn('Upload de imagem falhou para um produto:', storageErr);
+        return { imageUrl: undefined, uploadFailed: true as const };
+      }
+    });
+
+    let uploadFailed = false;
+    let hadAnyImage = false;
+    const creates: CreateProductInput[] = [];
+    const updates: Array<{ id: string; updates: UpdateProductInput }> = [];
+
+    for (let i = 0; i < pending.length; i++) {
+      const item = pending[i];
+      const { imageUrl, uploadFailed: failed } = uploadResults[i];
+      if (failed) uploadFailed = true;
+      if (imageUrl) hadAnyImage = true;
+
+      if (item.decision.action === 'update') {
+        updates.push({
+          id: item.decision.existingId,
+          updates: {
+            name: item.fields.name,
+            category: item.fields.category || undefined,
+            price: item.fields.price,
+            minOrder: item.fields.minOrder,
+            material: item.fields.material || undefined,
+            dimensions: item.fields.dimensions || undefined,
+            description: item.fields.description || undefined,
+            image: imageUrl,
+          },
+        });
+      } else {
+        creates.push({
+          importadoraId: importer.id,
+          code: item.decision.code,
+          name: item.fields.name,
+          category: item.fields.category || DEFAULT_CATEGORY,
+          price: item.fields.price,
+          minOrder: item.fields.minOrder,
+          material: item.fields.material || undefined,
+          dimensions: item.fields.dimensions || undefined,
+          description: item.fields.description || undefined,
+          active: true,
+          image: imageUrl,
+        });
+      }
+    }
+
+    if (creates.length > 0) {
+      await productsApi.createProducts(creates);
+    }
+    if (updates.length > 0) {
+      await asyncPool(updates, CATALOG_UPDATE_CONCURRENCY, async (row) => {
+        await productsApi.updateProductFast(row.id, row.updates);
+      });
+    }
+
+    return {
+      created: creates.length,
+      updated: updates.length,
+      uploadFailed,
+      hadAnyImage,
+    };
+  };
 
   /**
    * Extração com IA de visão (Gemini): cada produto vem com campos estruturados e a
@@ -587,7 +702,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const runAiCatalogExtraction = async (file: File): Promise<CatalogProcessResult> => {
     const { pages, skippedPageIndices, coverText } = await extractCatalogPagesForAi(file, {
       onPageProcessed: ({ currentPage, totalPages }) => {
-        setCatalogProgress({ currentPage, totalPages });
+        setCatalogProgress({ currentPage, totalPages, phase: 'render' });
       },
     });
 
@@ -617,42 +732,70 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     let aiPagesFailed = 0;
     let globalProductIdx = 0;
 
+    type PageExtractOutcome =
+      | { pageIndex: number; status: 'ok'; products: ExtractedCatalogProduct[]; pageBlob: Blob }
+      | { pageIndex: number; status: 'failed' }
+      | { pageIndex: number; status: 'fatal'; error: unknown };
+
     for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
       const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
-      for (const page of batch) {
-        let extracted: ExtractedCatalogProduct[];
+      setCatalogProgress({
+        currentPage: Math.min(i + batch.length, pages.length),
+        totalPages: pages.length,
+        phase: 'ai',
+      });
+
+      const outcomes = await asyncPool(batch, AI_PAGE_CONCURRENCY, async (page): Promise<PageExtractOutcome> => {
         try {
-          extracted = await extractCatalogPageWithRetry({
+          const products = await extractCatalogPageWithRetry({
             imageBase64: page.base64,
             mimeType: page.mimeType,
             nativeText: page.nativeText,
             categoryNames,
             catalogContext: coverText,
           });
+          return { pageIndex: page.pageIndex, status: 'ok', products, pageBlob: page.blob };
         } catch (err) {
           if (
             err instanceof CatalogExtractionRateLimitError ||
             isFatalCatalogExtractionError(err)
           ) {
-            throw err;
+            return { pageIndex: page.pageIndex, status: 'fatal', error: err };
           }
           if (err instanceof CatalogExtractionUnavailableError) {
             console.warn(
               `Página ${page.pageIndex + 1} ignorada (IA indisponível nesta página):`,
               err.message
             );
-            aiPagesFailed++;
-            continue;
+            return { pageIndex: page.pageIndex, status: 'failed' };
           }
           console.warn(`Falha ao extrair a página ${page.pageIndex + 1} do catálogo:`, err);
-          aiPagesFailed++;
+          return { pageIndex: page.pageIndex, status: 'failed' };
+        }
+      });
+
+      const fatal = outcomes.find((o) => o.status === 'fatal');
+      if (fatal && fatal.status === 'fatal') {
+        throw fatal.error;
+      }
+
+      const pendingCandidates: Array<{
+        decision: Extract<CatalogDedupDecision, { action: 'create' | 'update' }>;
+        product: ExtractedCatalogProduct;
+        pageIndex: number;
+        pageBlob: Blob;
+        productSlot?: number;
+      }> = [];
+
+      for (const outcome of outcomes) {
+        if (outcome.status !== 'ok') {
+          if (outcome.status === 'failed') aiPagesFailed++;
           continue;
         }
 
-        const productsOnPage = extracted.length;
-        for (let slot = 0; slot < extracted.length; slot++) {
-          const product = extracted[slot];
-          const decision = dedup(product.code, page.pageIndex, globalProductIdx);
+        const productsOnPage = outcome.products.length;
+        for (const product of outcome.products) {
+          const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
           globalProductIdx++;
 
           if (decision.action === 'skip') {
@@ -660,70 +803,62 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             continue;
           }
 
-          let blob: Blob = page.blob;
-          if (product.box) {
+          let productSlot: number | undefined;
+          if (productsOnPage > 1) {
+            const used = slotByPage.get(outcome.pageIndex) ?? 0;
+            productSlot = used;
+            slotByPage.set(outcome.pageIndex, used + 1);
+          }
+
+          pendingCandidates.push({
+            decision,
+            product,
+            pageIndex: outcome.pageIndex,
+            pageBlob: outcome.pageBlob,
+            productSlot,
+          });
+        }
+      }
+
+      const pending = await asyncPool(
+        pendingCandidates,
+        CATALOG_UPLOAD_CONCURRENCY,
+        async (candidate) => {
+          let blob: Blob = candidate.pageBlob;
+          const box = candidate.product.box;
+          if (box) {
             const cropped = await cropImageBlobRect(
-              page.blob,
-              product.box.left,
-              product.box.top,
-              product.box.right,
-              product.box.bottom
+              candidate.pageBlob,
+              box.left,
+              box.top,
+              box.right,
+              box.bottom
             );
             if (cropped) blob = cropped;
           }
-
-          let productSlot: number | undefined;
-          if (productsOnPage > 1) {
-            const used = slotByPage.get(page.pageIndex) ?? 0;
-            productSlot = used;
-            slotByPage.set(page.pageIndex, used + 1);
-          }
-
-          let imageUrl: string | undefined;
-          try {
-            imageUrl = await uploadCatalogPageImage(
-              importer.id,
-              page.pageIndex,
-              blob,
-              batchId,
-              productSlot
-            );
-            hadAnyImage = true;
-          } catch (storageErr) {
-            console.warn('Upload de imagem falhou para um produto:', storageErr);
-            uploadFailed = true;
-          }
-
-          if (decision.action === 'update') {
-            await productsApi.updateProduct(decision.existingId, {
-              name: product.name,
-              category: product.category || undefined,
-              price: product.price,
-              minOrder: product.minOrder,
-              material: product.material || undefined,
-              dimensions: product.dimensions || undefined,
-              description: product.description || undefined,
-              image: imageUrl,
-            });
-            updated++;
-          } else {
-            await productsApi.createProduct({
-              importadoraId: importer.id,
-              code: decision.code,
-              name: product.name,
-              category: product.category || DEFAULT_CATEGORY,
-              price: product.price,
-              minOrder: product.minOrder,
-              material: product.material || undefined,
-              dimensions: product.dimensions || undefined,
-              description: product.description || undefined,
-              active: true,
-              image: imageUrl,
-            });
-            created++;
-          }
+          return {
+            decision: candidate.decision,
+            fields: {
+              name: candidate.product.name,
+              category: candidate.product.category,
+              price: candidate.product.price,
+              minOrder: candidate.product.minOrder,
+              material: candidate.product.material,
+              dimensions: candidate.product.dimensions,
+              description: candidate.product.description,
+            },
+            imageBlob: blob,
+            pageIndex: candidate.pageIndex,
+            productSlot: candidate.productSlot,
+          };
         }
-      }
+      );
+
+      const persistResult = await persistCatalogProductBatch(pending, batchId);
+      created += persistResult.created;
+      updated += persistResult.updated;
+      if (persistResult.uploadFailed) uploadFailed = true;
+      if (persistResult.hadAnyImage) hadAnyImage = true;
     }
 
     return {
@@ -762,7 +897,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         });
       },
       onPageProcessed: ({ currentPage, totalPages }) => {
-        setCatalogProgress({ currentPage, totalPages });
+        setCatalogProgress({ currentPage, totalPages, phase: 'render' });
       },
     });
     const itemsWithPage: Array<ReturnType<typeof parseCatalogText>[number] & { pageIndex: number }> = [];
@@ -858,11 +993,9 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     }
 
     const batchId = String(Date.now());
-
-    let created = 0;
-    let updated = 0;
+    const pending: Parameters<typeof persistCatalogProductBatch>[0] = [];
     let skippedExisting = 0;
-    let uploadFailed = false;
+
     for (let idx = 0; idx < itemsWithPage.length; idx++) {
       const item = itemsWithPage[idx];
       const decision = dedup(item.code, item.pageIndex, idx);
@@ -883,62 +1016,40 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         }
         if (cropped) blob = cropped;
       }
+      if (!blob) continue;
+
       const samePage = itemsByPage.get(item.pageIndex) ?? [item];
       const productSlot = samePage.length > 1 ? samePage.indexOf(item) : undefined;
-      let imageUrl: string | undefined;
-      if (blob) {
-        try {
-          imageUrl = await uploadCatalogPageImage(
-            importer.id,
-            item.pageIndex,
-            blob,
-            batchId,
-            productSlot
-          );
-        } catch (storageErr) {
-          console.warn('Upload de imagem falhou para um produto:', storageErr);
-          uploadFailed = true;
-        }
-      }
-      if (decision.action === 'update') {
-        await productsApi.updateProduct(decision.existingId, {
-          name: item.name,
-          category: item.category || undefined,
-          price: item.price,
-          minOrder: item.minOrder,
-          material: item.material || undefined,
-          dimensions: item.dimensions || undefined,
-          description: item.description || undefined,
-          image: imageUrl,
-        });
-        updated++;
-      } else {
-        await productsApi.createProduct({
-          importadoraId: importer.id,
-          code: decision.code,
+
+      pending.push({
+        decision,
+        fields: {
           name: item.name,
           category: item.category,
           price: item.price,
           minOrder: item.minOrder,
-          material: item.material || undefined,
-          dimensions: item.dimensions || undefined,
-          description: item.description,
-          active: true,
-          image: imageUrl,
-        });
-        created++;
-      }
+          material: item.material || '',
+          dimensions: item.dimensions || '',
+          description: item.description || '',
+        },
+        imageBlob: blob,
+        pageIndex: item.pageIndex,
+        productSlot,
+      });
     }
 
+    const persistResult = await persistCatalogProductBatch(pending, batchId);
+
     return {
-      created,
-      updated,
-      uploadFailed,
+      created: persistResult.created,
+      updated: persistResult.updated,
+      uploadFailed: persistResult.uploadFailed,
       skippedCount: skippedPageIndices.length,
       skippedExisting,
-      hadAnyImage: pageBlobs.length > 0,
+      hadAnyImage: persistResult.hadAnyImage || pageBlobs.length > 0,
       ocrPageCount,
-      foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
+      foundProducts:
+        persistResult.created > 0 || persistResult.updated > 0 || skippedExisting > 0,
       aiPagesFailed: 0,
     };
   };
@@ -1959,7 +2070,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               )}
               {catalogProcessing
                 ? catalogProgress
-                  ? `Processando página ${catalogProgress.currentPage} de ${catalogProgress.totalPages}...`
+                  ? catalogProgress.phase === 'ai'
+                    ? `Lendo com IA ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
+                    : catalogProgress.phase === 'save'
+                      ? `Salvando produtos...`
+                      : `Preparando PDF ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
                   : 'Processando...'
                 : 'Processar Catálogo'}
             </Button>
