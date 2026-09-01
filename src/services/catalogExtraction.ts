@@ -1,4 +1,11 @@
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import {
+  CATALOG_AI_RETRY,
+  parseRetryAfterMs,
+  waitMsForAttempt,
+} from '@/services/catalogExtractionRetry';
+
+export { parseRetryAfterMs, waitMsForAttempt, CATALOG_AI_RETRY };
 
 /** Box da foto do produto em frações 0–1 da página (pronta para cropImageBlobRect). */
 export type CatalogPhotoBox = {
@@ -40,9 +47,12 @@ export class CatalogExtractionUnavailableError extends Error {
 
 /** Erro de limite de uso (HTTP 429) da IA: aguardar e tentar de novo, sem cair no método antigo. */
 export class CatalogExtractionRateLimitError extends Error {
-  constructor(message: string) {
+  readonly retryAfterMs: number | null;
+
+  constructor(message: string, retryAfterMs: number | null = null) {
     super(message);
     this.name = 'CatalogExtractionRateLimitError';
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -75,12 +85,13 @@ async function getAccessToken(): Promise<string> {
   return cachedAccessToken;
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const CLIENT_RATE_LIMIT_MAX_ATTEMPTS = 5;
-/** Backoff mais curto: catálogos grandes não devem ficar minutos idle por página. */
-const CLIENT_RATE_LIMIT_BASE_MS = 8_000;
-const CLIENT_RATE_LIMIT_MAX_MS = 45_000;
+/**
+ * Intervalo entre páginas na IA. Free tier do Gemini Flash costuma ser ~10–15 RPM;
+ * ~5s entre chamadas reduz 429 sem tornar o catálogo inviável.
+ */
+export const AI_PAGE_GAP_MS = CATALOG_AI_RETRY.pageGapMs;
 
 /** Erros de configuração/sessão: não adianta pular página nem repetir. */
 export function isFatalCatalogExtractionError(err: unknown): boolean {
@@ -95,29 +106,43 @@ export function isFatalCatalogExtractionError(err: unknown): boolean {
   );
 }
 
+export type ExtractCatalogPageRetryOptions = {
+  maxAttempts?: number;
+  /** Notifica a UI enquanto aguarda cota (429). */
+  onWaiting?: (info: { attempt: number; maxAttempts: number; waitMs: number }) => void;
+};
+
 /**
  * Chama a IA por página com novas tentativas em 429 (limite do Gemini).
- * Catálogos grandes (40+ páginas) costumam estourar cota no meio do processo.
+ * Catálogos grandes: espera a cota em vez de abortar o PDF inteiro.
  */
 export async function extractCatalogPageWithRetry(
-  input: ExtractCatalogPageInput
+  input: ExtractCatalogPageInput,
+  options?: ExtractCatalogPageRetryOptions
 ): Promise<ExtractedCatalogProduct[]> {
+  const maxAttempts = options?.maxAttempts ?? CATALOG_AI_RETRY.maxAttempts;
   let lastRateLimit: CatalogExtractionRateLimitError | null = null;
-  for (let attempt = 1; attempt <= CLIENT_RATE_LIMIT_MAX_ATTEMPTS; attempt++) {
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await extractCatalogPage(input);
     } catch (err) {
       if (err instanceof CatalogExtractionRateLimitError) {
         lastRateLimit = err;
-        if (attempt >= CLIENT_RATE_LIMIT_MAX_ATTEMPTS) break;
-        const waitMs = Math.min(CLIENT_RATE_LIMIT_BASE_MS * attempt, CLIENT_RATE_LIMIT_MAX_MS);
+        if (attempt >= maxAttempts) break;
+        const waitMs = waitMsForAttempt(attempt, err.retryAfterMs);
+        options?.onWaiting?.({ attempt, maxAttempts, waitMs });
         await sleep(waitMs);
         continue;
       }
       throw err;
     }
   }
-  throw lastRateLimit ?? new CatalogExtractionRateLimitError('Limite de uso da IA atingido.');
+
+  throw (
+    lastRateLimit ??
+    new CatalogExtractionRateLimitError('Limite de uso da IA atingido.')
+  );
 }
 
 /**
@@ -160,15 +185,19 @@ export async function extractCatalogPage(
   }
 
   const text = await response.text();
-  let payload:
-    | { products?: ExtractedCatalogProduct[]; error?: string; rateLimited?: boolean }
-    | null = null;
+  let payload: {
+    products?: ExtractedCatalogProduct[];
+    error?: string;
+    rateLimited?: boolean;
+    retryAfterMs?: number;
+  } | null = null;
   if (text.trim().startsWith('{')) {
     try {
       payload = JSON.parse(text) as {
         products?: ExtractedCatalogProduct[];
         error?: string;
         rateLimited?: boolean;
+        retryAfterMs?: number;
       };
     } catch {
       payload = null;
@@ -176,9 +205,15 @@ export async function extractCatalogPage(
   }
 
   if (!response.ok) {
-    const message = payload?.error?.trim() || `Erro HTTP ${response.status} ao processar o catálogo.`;
+    const message =
+      payload?.error?.trim() || `Erro HTTP ${response.status} ao processar o catálogo.`;
     if (response.status === 429 || payload?.rateLimited) {
-      throw new CatalogExtractionRateLimitError(message);
+      const retryAfterMs =
+        parseRetryAfterMs(payload?.retryAfterMs) ??
+        parseRetryAfterMs(payload?.error) ??
+        parseRetryAfterMs(text) ??
+        parseRetryAfterMs(response.headers.get('retry-after'));
+      throw new CatalogExtractionRateLimitError(message, retryAfterMs);
     }
     throw new CatalogExtractionUnavailableError(message);
   }
