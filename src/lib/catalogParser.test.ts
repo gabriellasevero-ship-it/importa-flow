@@ -6,6 +6,7 @@ import {
   isCatalogContentPage,
   isMetaCatalogLine,
   parseCatalogText,
+  shouldSendPageToCatalogAi,
   type CatalogParseLineMeta,
 } from './catalogParser';
 
@@ -183,5 +184,33 @@ Quantidade/Caixa: 100
 CRS-2170 R$ 10,00 Bóia
 Quantidade/Caixa: 100`;
     expect(isCatalogContentPage(page, 2)).toBe(true);
+  });
+});
+
+describe('shouldSendPageToCatalogAi', () => {
+  it('ignora capa (página 0) mesmo com produtos no texto', () => {
+    const productPage = `CRS-2168 R$ 5,75 Bóia Quantidade/Caixa: 100`;
+    expect(shouldSendPageToCatalogAi(productPage, 0)).toBe(false);
+  });
+
+  it('envia página só-imagem (texto insuficiente) para a IA', () => {
+    expect(shouldSendPageToCatalogAi('', 3)).toBe(true);
+    expect(shouldSendPageToCatalogAi('foto', 3)).toBe(true);
+  });
+
+  it('ainda ignora divisória promocional curta', () => {
+    const cover = `Novidades
+Akash IMPORTS
+DESCONTO DE 10% EM TODA A TABELA
+verão 2026`;
+    expect(shouldSendPageToCatalogAi(cover, 1)).toBe(false);
+  });
+
+  it('envia página com produtos', () => {
+    const page = `CRS-2168 R$ 5,75 Bóia
+Quantidade/Caixa: 100
+CRS-2170 R$ 10,00 Bóia
+Quantidade/Caixa: 100`;
+    expect(shouldSendPageToCatalogAi(page, 2)).toBe(true);
   });
 });

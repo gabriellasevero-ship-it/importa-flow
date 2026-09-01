@@ -64,8 +64,9 @@ describe('createProducts / updateProductFast', () => {
       category: 'Geral',
     }));
 
-    await createProducts(inputs);
+    const result = await createProducts(inputs);
 
+    expect(result).toEqual({ created: 120, failed: 0 });
     expect(insertMock).toHaveBeenCalledTimes(3);
     expect(insertMock.mock.calls[0][0]).toHaveLength(50);
     expect(insertMock.mock.calls[1][0]).toHaveLength(50);
@@ -79,8 +80,54 @@ describe('createProducts / updateProductFast', () => {
 
   it('createProducts no-ops on empty list', async () => {
     const { createProducts } = await import('./products');
-    await createProducts([]);
+    await expect(createProducts([])).resolves.toEqual({ created: 0, failed: 0 });
     expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('createProducts retries row-by-row when a chunk fails', async () => {
+    const { createProducts } = await import('./products');
+    insertMock
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: '23505', message: 'duplicate key value' },
+      })
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: '23505', message: 'duplicate key value' },
+      })
+      .mockResolvedValueOnce({ data: null, error: null });
+
+    const result = await createProducts([
+      {
+        importadoraId: 'imp-1',
+        code: 'A',
+        name: 'Um',
+        price: 1,
+        minOrder: 1,
+        category: 'Geral',
+      },
+      {
+        importadoraId: 'imp-1',
+        code: 'B',
+        name: 'Dois',
+        price: 1,
+        minOrder: 1,
+        category: 'Geral',
+      },
+      {
+        importadoraId: 'imp-1',
+        code: 'C',
+        name: 'Tres',
+        price: 1,
+        minOrder: 1,
+        category: 'Geral',
+      },
+    ]);
+
+    // 1 chunk attempt + 3 row attempts
+    expect(insertMock).toHaveBeenCalledTimes(4);
+    expect(result).toEqual({ created: 2, failed: 1 });
   });
 
   it('updateProductFast updates without select', async () => {

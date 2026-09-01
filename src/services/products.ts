@@ -135,20 +135,77 @@ export async function createProduct(input: CreateProductInput): Promise<Product>
 
 const CREATE_PRODUCTS_CHUNK = 50;
 
+function isUniqueViolation(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === '23505' || /duplicate|unique/i.test(error.message ?? '');
+}
+
+export type CreateProductsResult = {
+  created: number;
+  /** Linhas que não entraram (duplicata ou erro). */
+  failed: number;
+};
+
 /**
- * Insere vários produtos em lotes. Não faz select/join — pensado para upload
- * de catálogo, onde só importa persistir rápido.
+ * Insere vários produtos em lotes. Se um lote falhar (ex.: 1 código duplicado),
+ * tenta linha a linha para não perder o restante do catálogo.
  */
-export async function createProducts(inputs: CreateProductInput[]): Promise<void> {
-  if (inputs.length === 0) return;
+export async function createProducts(inputs: CreateProductInput[]): Promise<CreateProductsResult> {
+  if (inputs.length === 0) return { created: 0, failed: 0 };
   assertSupabaseConfigured();
 
   const rows = inputs.map(toProductInsertRow);
+  let created = 0;
+  let failed = 0;
+
   for (let i = 0; i < rows.length; i += CREATE_PRODUCTS_CHUNK) {
     const chunk = rows.slice(i, i + CREATE_PRODUCTS_CHUNK);
     const { error } = await supabase.from('products').insert(chunk);
-    if (error) throw error;
+    if (!error) {
+      created += chunk.length;
+      continue;
+    }
+
+    for (const row of chunk) {
+      const { error: rowError } = await supabase.from('products').insert(row);
+      if (!rowError) {
+        created += 1;
+        continue;
+      }
+      if (!isUniqueViolation(rowError)) {
+        console.warn('Falha ao inserir produto do catálogo:', row.code, rowError);
+      }
+      failed += 1;
+    }
   }
+
+  return { created, failed };
+}
+
+/**
+ * Mapa código→id dos produtos já cadastrados na importadora (para dedup no upload).
+ */
+export async function fetchProductCodesByImportadora(
+  importadoraId: string
+): Promise<Map<string, string>> {
+  assertSupabaseConfigured();
+
+  const { data, error } = await supabase
+    .from('products')
+    .select('id, code')
+    .eq('importadora_id', importadoraId);
+  if (error) throw error;
+
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    const key = String(row.code ?? '')
+      .trim()
+      .toUpperCase();
+    if (key && !map.has(key)) {
+      map.set(key, row.id as string);
+    }
+  }
+  return map;
 }
 
 export async function updateProduct(
