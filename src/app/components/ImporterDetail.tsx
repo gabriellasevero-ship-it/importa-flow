@@ -11,10 +11,12 @@ import {
 import { asyncPool } from '@/lib/asyncPool';
 import { DEFAULT_CATEGORY, findOrderedUniqueSkuMatches, parseCatalogText } from '@/lib/catalogParser';
 import {
+  AI_PAGE_GAP_MS,
   CatalogExtractionRateLimitError,
   CatalogExtractionUnavailableError,
   extractCatalogPageWithRetry,
   isFatalCatalogExtractionError,
+  sleep,
   type ExtractedCatalogProduct,
 } from '@/services/catalogExtraction';
 import { useCategories, useProducts, useRepresentatives } from '@/hooks/useData';
@@ -58,8 +60,11 @@ import {
 } from '@/app/components/ui/dropdown-menu';
 
 const PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-/** Páginas em paralelo na IA. 2 reduz tempo sem estourar cota tão fácil quanto 3+. */
-const AI_PAGE_CONCURRENCY = 2;
+/**
+ * Sequencial (1) + pausa entre páginas: reduz 429 do Gemini free tier.
+ * Completude > velocidade neste fluxo.
+ */
+const AI_PAGE_CONCURRENCY = 1;
 /** Uploads de imagem em paralelo por lote de persistência. */
 const CATALOG_UPLOAD_CONCURRENCY = 6;
 /** Updates individuais em paralelo (Supabase não faz multi-row update com valores distintos). */
@@ -155,7 +160,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
   const [catalogProgress, setCatalogProgress] = useState<{
     currentPage: number;
     totalPages: number;
-    phase: 'render' | 'ai' | 'save';
+    phase: 'render' | 'ai' | 'save' | 'waiting';
+    waitSeconds?: number;
   } | null>(null);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [productSaving, setProductSaving] = useState(false);
@@ -788,7 +794,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     let insertFailed = 0;
     let heuristicRecoveredPages = 0;
     let globalProductIdx = 0;
-    let pendingFatal: unknown = null;
+    let hitRateLimit = false;
 
     type PageExtractOutcome =
       | {
@@ -798,8 +804,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           pageBlob: Blob;
           viaHeuristic?: boolean;
         }
-      | { pageIndex: number; status: 'failed' }
-      | { pageIndex: number; status: 'fatal'; error: unknown };
+      | { pageIndex: number; status: 'failed' };
 
     const resolveProductsForPage = (
       pageIndex: number,
@@ -832,10 +837,50 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       return { products: [], viaHeuristic: false, failed: false };
     };
 
-    for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
-      if (pendingFatal) break;
+    const enqueuePageProducts = (
+      pageIndex: number,
+      products: ExtractedCatalogProduct[],
+      pageBlob: Blob,
+      pendingCandidates: Array<{
+        decision: Extract<CatalogDedupDecision, { action: 'create' | 'update' }>;
+        product: ExtractedCatalogProduct;
+        pageIndex: number;
+        pageBlob: Blob;
+        productSlot?: number;
+      }>
+    ) => {
+      const productsOnPage = products.length;
+      for (const product of products) {
+        const decision = dedup(product.code, pageIndex, globalProductIdx);
+        globalProductIdx++;
+        if (decision.action === 'skip') {
+          skippedExisting++;
+          continue;
+        }
+        let productSlot: number | undefined;
+        if (productsOnPage > 1) {
+          const used = slotByPage.get(pageIndex) ?? 0;
+          productSlot = used;
+          slotByPage.set(pageIndex, used + 1);
+        }
+        pendingCandidates.push({
+          decision,
+          product,
+          pageIndex,
+          pageBlob,
+          productSlot,
+        });
+      }
+    };
 
+    for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
       const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
+
+      // Pausa entre páginas (não antes da primeira) para não estourar RPM.
+      if (i > 0) {
+        await sleep(AI_PAGE_GAP_MS);
+      }
+
       setCatalogProgress({
         currentPage: Math.min(i + batch.length, pages.length),
         totalPages: pages.length,
@@ -844,20 +889,45 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
 
       const outcomes = await asyncPool(batch, AI_PAGE_CONCURRENCY, async (page): Promise<PageExtractOutcome> => {
         try {
-          const products = await extractCatalogPageWithRetry({
-            imageBase64: page.base64,
-            mimeType: page.mimeType,
-            nativeText: page.nativeText,
-            categoryNames,
-            catalogContext: coverText,
-          });
+          const products = await extractCatalogPageWithRetry(
+            {
+              imageBase64: page.base64,
+              mimeType: page.mimeType,
+              nativeText: page.nativeText,
+              categoryNames,
+              catalogContext: coverText,
+            },
+            {
+              onWaiting: ({ attempt, maxAttempts, waitMs }) => {
+                const firstNotice = !hitRateLimit;
+                hitRateLimit = true;
+                setCatalogProgress({
+                  currentPage: i + 1,
+                  totalPages: pages.length,
+                  phase: 'waiting',
+                  waitSeconds: Math.ceil(waitMs / 1000),
+                });
+                if (firstNotice) {
+                  toast.info('Limite da IA atingido — aguardando cota para continuar…', {
+                    description: `Tentativa ${attempt}/${maxAttempts}. O cadastro não será interrompido.`,
+                    duration: Math.min(waitMs, 12_000),
+                  });
+                }
+              },
+            }
+          );
           return { pageIndex: page.pageIndex, status: 'ok', products, pageBlob: page.blob };
         } catch (err) {
-          if (
-            err instanceof CatalogExtractionRateLimitError ||
-            isFatalCatalogExtractionError(err)
-          ) {
-            return { pageIndex: page.pageIndex, status: 'fatal', error: err };
+          if (isFatalCatalogExtractionError(err)) {
+            throw err;
+          }
+          if (err instanceof CatalogExtractionRateLimitError) {
+            hitRateLimit = true;
+            console.warn(
+              `Página ${page.pageIndex + 1}: cota da IA esgotada após retries; tentando heurística e seguindo.`,
+              err.message
+            );
+            return { pageIndex: page.pageIndex, status: 'failed' };
           }
           if (err instanceof CatalogExtractionUnavailableError) {
             console.warn(
@@ -880,45 +950,6 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       }> = [];
 
       for (const outcome of outcomes) {
-        if (outcome.status === 'fatal') {
-          pendingFatal = outcome.error;
-          // Ainda tenta recuperar esta página via heurística antes de parar.
-          const recovered = resolveProductsForPage(outcome.pageIndex, null, true);
-          if (recovered.products.length === 0) {
-            aiPagesFailed++;
-            continue;
-          }
-          if (recovered.viaHeuristic) heuristicRecoveredPages++;
-          const pageBlob = pageByIndex.get(outcome.pageIndex)?.blob;
-          if (!pageBlob) {
-            aiPagesFailed++;
-            continue;
-          }
-          const productsOnPage = recovered.products.length;
-          for (const product of recovered.products) {
-            const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
-            globalProductIdx++;
-            if (decision.action === 'skip') {
-              skippedExisting++;
-              continue;
-            }
-            let productSlot: number | undefined;
-            if (productsOnPage > 1) {
-              const used = slotByPage.get(outcome.pageIndex) ?? 0;
-              productSlot = used;
-              slotByPage.set(outcome.pageIndex, used + 1);
-            }
-            pendingCandidates.push({
-              decision,
-              product,
-              pageIndex: outcome.pageIndex,
-              pageBlob,
-              productSlot,
-            });
-          }
-          continue;
-        }
-
         if (outcome.status === 'failed') {
           const recovered = resolveProductsForPage(outcome.pageIndex, null, true);
           if (recovered.products.length === 0) {
@@ -931,28 +962,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
             aiPagesFailed++;
             continue;
           }
-          const productsOnPage = recovered.products.length;
-          for (const product of recovered.products) {
-            const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
-            globalProductIdx++;
-            if (decision.action === 'skip') {
-              skippedExisting++;
-              continue;
-            }
-            let productSlot: number | undefined;
-            if (productsOnPage > 1) {
-              const used = slotByPage.get(outcome.pageIndex) ?? 0;
-              productSlot = used;
-              slotByPage.set(outcome.pageIndex, used + 1);
-            }
-            pendingCandidates.push({
-              decision,
-              product,
-              pageIndex: outcome.pageIndex,
-              pageBlob,
-              productSlot,
-            });
-          }
+          enqueuePageProducts(outcome.pageIndex, recovered.products, pageBlob, pendingCandidates);
           continue;
         }
 
@@ -964,34 +974,14 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         if (resolved.viaHeuristic) heuristicRecoveredPages++;
         if (resolved.products.length === 0) continue;
 
-        const productsOnPage = resolved.products.length;
-        for (const product of resolved.products) {
-          const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
-          globalProductIdx++;
-
-          if (decision.action === 'skip') {
-            skippedExisting++;
-            continue;
-          }
-
-          let productSlot: number | undefined;
-          if (productsOnPage > 1) {
-            const used = slotByPage.get(outcome.pageIndex) ?? 0;
-            productSlot = used;
-            slotByPage.set(outcome.pageIndex, used + 1);
-          }
-
-          pendingCandidates.push({
-            decision,
-            product,
-            pageIndex: outcome.pageIndex,
-            pageBlob: outcome.pageBlob,
-            productSlot,
-          });
-        }
+        enqueuePageProducts(
+          outcome.pageIndex,
+          resolved.products,
+          outcome.pageBlob,
+          pendingCandidates
+        );
       }
 
-      // Persiste páginas OK deste lote ANTES de relançar 429/fatal (evita perder a irmã).
       const pending = await asyncPool(
         pendingCandidates,
         CATALOG_UPLOAD_CONCURRENCY,
@@ -1032,10 +1022,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       insertFailed += persistResult.insertFailed;
       if (persistResult.uploadFailed) uploadFailed = true;
       if (persistResult.hadAnyImage) hadAnyImage = true;
+    }
 
-      if (pendingFatal) {
-        throw pendingFatal;
-      }
+    if (hitRateLimit && aiPagesFailed > 0) {
+      toast.warning(
+        'A cota da IA limitou algumas páginas. Reenvie o mesmo PDF depois (códigos já salvos serão ignorados).',
+        { duration: 14_000 }
+      );
     }
 
     return {
@@ -1247,15 +1240,15 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         result = await runAiCatalogExtraction(uploadedFile);
       } catch (aiError) {
         if (aiError instanceof CatalogExtractionRateLimitError) {
-          await refetchProducts();
-          toast.error('Limite de uso da IA atingido (429).', {
-            description:
-              'Produtos já salvos antes do erro permanecem cadastrados. Aguarde alguns minutos e reenvie o catálogo (códigos existentes serão ignorados).',
-            duration: 14_000,
+          // Segurança: o fluxo principal já espera/continua no 429; se ainda chegar aqui,
+          // tenta heurística no PDF inteiro em vez de desistir dos produtos restantes.
+          console.warn('Limite da IA após retries; caindo para método alternativo.', aiError.message);
+          toast.warning('Limite da IA atingido — concluindo com leitura alternativa do PDF…', {
+            duration: 10_000,
           });
-          return;
-        }
-        if (aiError instanceof CatalogExtractionUnavailableError) {
+          setCatalogProgress(null);
+          result = await runHeuristicCatalogExtraction(uploadedFile);
+        } else if (aiError instanceof CatalogExtractionUnavailableError) {
           console.warn('Extração por IA indisponível; usando método alternativo:', aiError.message);
           toast.info('IA indisponível: processando com o método alternativo.', {
             description: aiError.message,
@@ -2279,11 +2272,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
               )}
               {catalogProcessing
                 ? catalogProgress
-                  ? catalogProgress.phase === 'ai'
-                    ? `Lendo com IA ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
-                    : catalogProgress.phase === 'save'
-                      ? `Salvando produtos...`
-                      : `Preparando PDF ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
+                  ? catalogProgress.phase === 'waiting'
+                    ? `Aguardando cota da IA (~${catalogProgress.waitSeconds ?? '?'}s)...`
+                    : catalogProgress.phase === 'ai'
+                      ? `Lendo com IA ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
+                      : catalogProgress.phase === 'save'
+                        ? `Salvando produtos...`
+                        : `Preparando PDF ${catalogProgress.currentPage}/${catalogProgress.totalPages}...`
                   : 'Processando...'
                 : 'Processar Catálogo'}
             </Button>

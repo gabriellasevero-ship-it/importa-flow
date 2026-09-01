@@ -206,9 +206,11 @@ function toExtractedProduct(p: GeminiProduct): ExtractedProduct {
 
 /** Erro de limite de uso (429): o cliente NÃO deve cair no fallback em massa, só aguardar. */
 class GeminiRateLimitError extends Error {
-  constructor(message: string) {
+  retryAfterMs: number | null;
+  constructor(message: string, retryAfterMs: number | null = null) {
     super(message);
     this.name = "GeminiRateLimitError";
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -278,13 +280,14 @@ async function callGemini(
       if (!isRetryable) {
         throw new Error(`Falha na IA (HTTP ${res.status}).`);
       }
+      const retryAfter = parseRetryAfterMs(detail);
       if (attempt >= GEMINI_MAX_ATTEMPTS) {
         throw new GeminiRateLimitError(
           "Limite de uso da IA atingido (HTTP 429). Aguarde alguns instantes e tente novamente; " +
             "se persistir, verifique a cota/billing da sua chave do Gemini no Google AI Studio.",
+          retryAfter ?? GEMINI_BASE_BACKOFF_MS * 2 ** (attempt - 1),
         );
       }
-      const retryAfter = parseRetryAfterMs(detail);
       const backoff = retryAfter ?? GEMINI_BASE_BACKOFF_MS * 2 ** (attempt - 1);
       await sleep(backoff);
     }
@@ -398,7 +401,14 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error("extract-catalog-page:", err);
     if (err instanceof GeminiRateLimitError) {
-      return jsonResponse({ error: err.message, rateLimited: true }, 429);
+      return jsonResponse(
+        {
+          error: err.message,
+          rateLimited: true,
+          retryAfterMs: err.retryAfterMs ?? 30_000,
+        },
+        429,
+      );
     }
     const message = err instanceof Error ? err.message : "Erro interno na função.";
     return jsonResponse({ error: message }, 500);
