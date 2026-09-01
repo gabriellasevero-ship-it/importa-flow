@@ -8,10 +8,11 @@ import pdfjsWorker from '@/lib/pdf.worker?worker&url';
 import {
   findOrderedUniqueSkuMatches,
   isCatalogContentPage,
+  shouldSendPageToCatalogAi,
   type CatalogParseLineMeta,
 } from '@/lib/catalogParser';
 
-export { isCatalogContentPage } from '@/lib/catalogParser';
+export { isCatalogContentPage, shouldSendPageToCatalogAi } from '@/lib/catalogParser';
 
 if (typeof pdfjsWorker === 'string') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -752,7 +753,7 @@ export async function extractCatalogPagesForAi(
     const textContent = await page.getTextContent();
     const nativeText = buildPageTextFromPdfItems(textContent.items);
 
-    if (!isCatalogContentPage(nativeText, pdfPageIndex)) {
+    if (!shouldSendPageToCatalogAi(nativeText, pdfPageIndex)) {
       skippedPageIndices.push(pdfPageIndex);
       // Capa/divisórias antes do primeiro produto costumam trazer a categoria do catálogo.
       if (!seenContentPage && nativeText.trim()) {

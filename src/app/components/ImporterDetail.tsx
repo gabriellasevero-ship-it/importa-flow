@@ -9,7 +9,7 @@ import {
   extractTextAndPageImages,
 } from '@/lib/pdfUtils';
 import { asyncPool } from '@/lib/asyncPool';
-import { DEFAULT_CATEGORY, parseCatalogText } from '@/lib/catalogParser';
+import { DEFAULT_CATEGORY, findOrderedUniqueSkuMatches, parseCatalogText } from '@/lib/catalogParser';
 import {
   CatalogExtractionRateLimitError,
   CatalogExtractionUnavailableError,
@@ -537,6 +537,10 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     foundProducts: boolean;
     /** Páginas cuja IA falhou (erro transitório); produtos das outras páginas podem ter sido salvos. */
     aiPagesFailed: number;
+    /** Produtos que a IA/heurística viu mas o insert falhou. */
+    insertFailed: number;
+    /** Páginas recuperadas com heurística após falha/vazio da IA. */
+    heuristicRecoveredPages: number;
   };
 
   type CatalogDedupDecision =
@@ -550,15 +554,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
    * dentro do catálogo são tratadas uma única vez. Produtos sem código não têm como ser
    * deduplicados, então recebem um código de fallback único e são criados.
    */
-  const buildCatalogDedup = (updateExisting: boolean) => {
+  const buildCatalogDedup = (
+    updateExisting: boolean,
+    existingIdByCode: Map<string, string>
+  ) => {
     const normalize = (code: string) => code.trim().toUpperCase();
-    const existingIdByCode = new Map<string, string>();
-    for (const p of products) {
-      const key = normalize(p.code);
-      if (key.length > 0 && !existingIdByCode.has(key)) {
-        existingIdByCode.set(key, p.id);
-      }
-    }
     const seen = new Set<string>();
     return (rawCode: string, pageIndex: number, batchIndex: number): CatalogDedupDecision => {
       const code = (rawCode && rawCode.trim()) || '';
@@ -588,6 +588,37 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     };
   };
 
+  const loadCatalogDedup = async (updateExisting: boolean) => {
+    let existingIdByCode = new Map<string, string>();
+    try {
+      existingIdByCode = await productsApi.fetchProductCodesByImportadora(importer.id);
+    } catch (err) {
+      console.warn('Não foi possível recarregar códigos do banco; usando lista em memória.', err);
+      for (const p of products) {
+        const key = p.code.trim().toUpperCase();
+        if (key && !existingIdByCode.has(key)) {
+          existingIdByCode.set(key, p.id);
+        }
+      }
+    }
+    return buildCatalogDedup(updateExisting, existingIdByCode);
+  };
+
+  const heuristicProductsFromPageText = (nativeText: string): ExtractedCatalogProduct[] => {
+    const items = parseCatalogText(nativeText, { categoryNames });
+    return items.map((item) => ({
+      code: item.code,
+      name: item.name,
+      description: item.description || '',
+      price: item.price,
+      minOrder: item.minOrder,
+      dimensions: item.dimensions || '',
+      material: item.material || '',
+      category: item.category || DEFAULT_CATEGORY,
+      box: null,
+    }));
+  };
+
   /**
    * Crop + upload em paralelo e persistência em lote (insert em chunks / updates paralelos).
    */
@@ -608,9 +639,15 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       productSlot?: number;
     }>,
     batchId: string
-  ): Promise<{ created: number; updated: number; uploadFailed: boolean; hadAnyImage: boolean }> => {
+  ): Promise<{
+    created: number;
+    updated: number;
+    uploadFailed: boolean;
+    hadAnyImage: boolean;
+    insertFailed: number;
+  }> => {
     if (pending.length === 0) {
-      return { created: 0, updated: 0, uploadFailed: false, hadAnyImage: false };
+      return { created: 0, updated: 0, uploadFailed: false, hadAnyImage: false, insertFailed: 0 };
     }
 
     setCatalogProgress((prev) =>
@@ -677,20 +714,35 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       }
     }
 
+    let insertFailed = 0;
+    let created = 0;
     if (creates.length > 0) {
-      await productsApi.createProducts(creates);
+      const insertResult = await productsApi.createProducts(creates);
+      created = insertResult.created;
+      insertFailed += insertResult.failed;
     }
+
+    let updated = 0;
     if (updates.length > 0) {
-      await asyncPool(updates, CATALOG_UPDATE_CONCURRENCY, async (row) => {
-        await productsApi.updateProductFast(row.id, row.updates);
+      const updateResults = await asyncPool(updates, CATALOG_UPDATE_CONCURRENCY, async (row) => {
+        try {
+          await productsApi.updateProductFast(row.id, row.updates);
+          return true;
+        } catch (err) {
+          console.warn('Falha ao atualizar produto do catálogo:', row.id, err);
+          return false;
+        }
       });
+      updated = updateResults.filter(Boolean).length;
+      insertFailed += updateResults.length - updated;
     }
 
     return {
-      created: creates.length,
-      updated: updates.length,
+      created,
+      updated,
       uploadFailed,
       hadAnyImage,
+      insertFailed,
     };
   };
 
@@ -717,12 +769,15 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         ocrPageCount: 0,
         foundProducts: false,
         aiPagesFailed: 0,
+        insertFailed: 0,
+        heuristicRecoveredPages: 0,
       };
     }
 
-    const dedup = buildCatalogDedup(updateExistingProducts);
+    const dedup = await loadCatalogDedup(updateExistingProducts);
     const batchId = String(Date.now());
     const slotByPage = new Map<number, number>();
+    const pageByIndex = new Map(pages.map((p) => [p.pageIndex, p]));
 
     let created = 0;
     let updated = 0;
@@ -730,14 +785,56 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
     let uploadFailed = false;
     let hadAnyImage = false;
     let aiPagesFailed = 0;
+    let insertFailed = 0;
+    let heuristicRecoveredPages = 0;
     let globalProductIdx = 0;
+    let pendingFatal: unknown = null;
 
     type PageExtractOutcome =
-      | { pageIndex: number; status: 'ok'; products: ExtractedCatalogProduct[]; pageBlob: Blob }
+      | {
+          pageIndex: number;
+          status: 'ok';
+          products: ExtractedCatalogProduct[];
+          pageBlob: Blob;
+          viaHeuristic?: boolean;
+        }
       | { pageIndex: number; status: 'failed' }
       | { pageIndex: number; status: 'fatal'; error: unknown };
 
+    const resolveProductsForPage = (
+      pageIndex: number,
+      aiProducts: ExtractedCatalogProduct[] | null,
+      aiFailed: boolean
+    ): { products: ExtractedCatalogProduct[]; viaHeuristic: boolean; failed: boolean } => {
+      const page = pageByIndex.get(pageIndex);
+      const nativeText = page?.nativeText ?? '';
+      const skuHints = findOrderedUniqueSkuMatches(nativeText);
+
+      if (aiProducts && aiProducts.length > 0) {
+        // IA devolveu poucos itens vs. REFs no texto → completa com heurística.
+        if (skuHints.length >= 2 && aiProducts.length < Math.ceil(skuHints.length * 0.5)) {
+          const heuristic = heuristicProductsFromPageText(nativeText);
+          if (heuristic.length > aiProducts.length) {
+            return { products: heuristic, viaHeuristic: true, failed: false };
+          }
+        }
+        return { products: aiProducts, viaHeuristic: false, failed: false };
+      }
+
+      if (aiFailed || !aiProducts || aiProducts.length === 0) {
+        const heuristic = heuristicProductsFromPageText(nativeText);
+        if (heuristic.length > 0) {
+          return { products: heuristic, viaHeuristic: true, failed: false };
+        }
+        return { products: [], viaHeuristic: false, failed: aiFailed };
+      }
+
+      return { products: [], viaHeuristic: false, failed: false };
+    };
+
     for (let i = 0; i < pages.length; i += AI_PAGE_CONCURRENCY) {
+      if (pendingFatal) break;
+
       const batch = pages.slice(i, i + AI_PAGE_CONCURRENCY);
       setCatalogProgress({
         currentPage: Math.min(i + batch.length, pages.length),
@@ -764,7 +861,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           }
           if (err instanceof CatalogExtractionUnavailableError) {
             console.warn(
-              `Página ${page.pageIndex + 1} ignorada (IA indisponível nesta página):`,
+              `Página ${page.pageIndex + 1}: IA indisponível; tentando heurística.`,
               err.message
             );
             return { pageIndex: page.pageIndex, status: 'failed' };
@@ -773,11 +870,6 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
           return { pageIndex: page.pageIndex, status: 'failed' };
         }
       });
-
-      const fatal = outcomes.find((o) => o.status === 'fatal');
-      if (fatal && fatal.status === 'fatal') {
-        throw fatal.error;
-      }
 
       const pendingCandidates: Array<{
         decision: Extract<CatalogDedupDecision, { action: 'create' | 'update' }>;
@@ -788,13 +880,92 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       }> = [];
 
       for (const outcome of outcomes) {
-        if (outcome.status !== 'ok') {
-          if (outcome.status === 'failed') aiPagesFailed++;
+        if (outcome.status === 'fatal') {
+          pendingFatal = outcome.error;
+          // Ainda tenta recuperar esta página via heurística antes de parar.
+          const recovered = resolveProductsForPage(outcome.pageIndex, null, true);
+          if (recovered.products.length === 0) {
+            aiPagesFailed++;
+            continue;
+          }
+          if (recovered.viaHeuristic) heuristicRecoveredPages++;
+          const pageBlob = pageByIndex.get(outcome.pageIndex)?.blob;
+          if (!pageBlob) {
+            aiPagesFailed++;
+            continue;
+          }
+          const productsOnPage = recovered.products.length;
+          for (const product of recovered.products) {
+            const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
+            globalProductIdx++;
+            if (decision.action === 'skip') {
+              skippedExisting++;
+              continue;
+            }
+            let productSlot: number | undefined;
+            if (productsOnPage > 1) {
+              const used = slotByPage.get(outcome.pageIndex) ?? 0;
+              productSlot = used;
+              slotByPage.set(outcome.pageIndex, used + 1);
+            }
+            pendingCandidates.push({
+              decision,
+              product,
+              pageIndex: outcome.pageIndex,
+              pageBlob,
+              productSlot,
+            });
+          }
           continue;
         }
 
-        const productsOnPage = outcome.products.length;
-        for (const product of outcome.products) {
+        if (outcome.status === 'failed') {
+          const recovered = resolveProductsForPage(outcome.pageIndex, null, true);
+          if (recovered.products.length === 0) {
+            aiPagesFailed++;
+            continue;
+          }
+          if (recovered.viaHeuristic) heuristicRecoveredPages++;
+          const pageBlob = pageByIndex.get(outcome.pageIndex)?.blob;
+          if (!pageBlob) {
+            aiPagesFailed++;
+            continue;
+          }
+          const productsOnPage = recovered.products.length;
+          for (const product of recovered.products) {
+            const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
+            globalProductIdx++;
+            if (decision.action === 'skip') {
+              skippedExisting++;
+              continue;
+            }
+            let productSlot: number | undefined;
+            if (productsOnPage > 1) {
+              const used = slotByPage.get(outcome.pageIndex) ?? 0;
+              productSlot = used;
+              slotByPage.set(outcome.pageIndex, used + 1);
+            }
+            pendingCandidates.push({
+              decision,
+              product,
+              pageIndex: outcome.pageIndex,
+              pageBlob,
+              productSlot,
+            });
+          }
+          continue;
+        }
+
+        const resolved = resolveProductsForPage(outcome.pageIndex, outcome.products, false);
+        if (resolved.failed) {
+          aiPagesFailed++;
+          continue;
+        }
+        if (resolved.viaHeuristic) heuristicRecoveredPages++;
+        if (resolved.products.length === 0) continue;
+
+        const productsOnPage = resolved.products.length;
+        for (const product of resolved.products) {
           const decision = dedup(product.code, outcome.pageIndex, globalProductIdx);
           globalProductIdx++;
 
@@ -820,6 +991,7 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         }
       }
 
+      // Persiste páginas OK deste lote ANTES de relançar 429/fatal (evita perder a irmã).
       const pending = await asyncPool(
         pendingCandidates,
         CATALOG_UPLOAD_CONCURRENCY,
@@ -857,8 +1029,13 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       const persistResult = await persistCatalogProductBatch(pending, batchId);
       created += persistResult.created;
       updated += persistResult.updated;
+      insertFailed += persistResult.insertFailed;
       if (persistResult.uploadFailed) uploadFailed = true;
       if (persistResult.hadAnyImage) hadAnyImage = true;
+
+      if (pendingFatal) {
+        throw pendingFatal;
+      }
     }
 
     return {
@@ -871,6 +1048,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       ocrPageCount: 0,
       foundProducts: created > 0 || updated > 0 || skippedExisting > 0,
       aiPagesFailed,
+      insertFailed,
+      heuristicRecoveredPages,
     };
   };
 
@@ -919,9 +1098,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         ocrPageCount,
         foundProducts: false,
         aiPagesFailed: 0,
+        insertFailed: 0,
+        heuristicRecoveredPages: 0,
       };
     }
-    const dedup = buildCatalogDedup(updateExistingProducts);
+    const dedup = await loadCatalogDedup(updateExistingProducts);
 
     const itemsByPage = new Map<number, typeof itemsWithPage>();
     for (const it of itemsWithPage) {
@@ -1051,6 +1232,8 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       foundProducts:
         persistResult.created > 0 || persistResult.updated > 0 || skippedExisting > 0,
       aiPagesFailed: 0,
+      insertFailed: persistResult.insertFailed,
+      heuristicRecoveredPages: 0,
     };
   };
 
@@ -1090,6 +1273,12 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
         );
       }
 
+      if (result.heuristicRecoveredPages > 0) {
+        toast.info(
+          `${result.heuristicRecoveredPages} página(s) recuperada(s) com leitura alternativa do PDF.`
+        );
+      }
+
       if (result.skippedCount > 0) {
         toast.info(`${result.skippedCount} página(s) ignorada(s) (capa ou sem produtos).`);
       }
@@ -1126,6 +1315,11 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       if (result.uploadFailed) {
         toast.warning('Algumas imagens não foram enviadas; revise os produtos sem foto.');
       }
+      if (result.insertFailed > 0) {
+        toast.warning(
+          `${result.insertFailed} produto(s) não puderam ser salvos (código duplicado ou erro). Reenvie o catálogo se faltarem itens.`
+        );
+      }
 
       await refetchProducts();
       setShowCatalogUploadDialog(false);
@@ -1141,12 +1335,27 @@ export const ImporterDetail: React.FC<ImporterDetailProps> = ({
       if (result.skippedExisting > 0) {
         successParts.push(`${result.skippedExisting} já existiam e foram ignorados.`);
       }
+      if (result.aiPagesFailed > 0) {
+        successParts.push(
+          `${result.aiPagesFailed} página(s) ficaram sem leitura — o catálogo pode estar incompleto.`
+        );
+      }
       if (result.ocrPageCount > 0) {
         successParts.push(
           `OCR aplicado em ${result.ocrPageCount} página(s) para extrair os dados.`
         );
       }
-      if (successParts.length > 0) {
+
+      const isPartial =
+        result.aiPagesFailed > 0 || result.insertFailed > 0 || result.skippedCount > 5;
+      if (isPartial) {
+        toast.warning(successTitle, {
+          description:
+            (successParts.length > 0 ? successParts.join(' ') + ' ' : '') +
+            'Confira a lista de produtos e reenvie o PDF se faltar algum.',
+          duration: 14_000,
+        });
+      } else if (successParts.length > 0) {
         toast.success(successTitle, { description: successParts.join(' ') });
       } else {
         toast.success(successTitle);

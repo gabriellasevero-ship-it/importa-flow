@@ -71,6 +71,7 @@ function pageTextLooksInsufficient(text: string): boolean {
 
 /**
  * Página com conteúdo de produtos (não capa). Índice 0 do PDF é sempre ignorado.
+ * Usado no caminho heurístico/OCR (precisa de texto nativo útil).
  */
 export function isCatalogContentPage(pageText: string, pdfPageIndex: number): boolean {
   if (pdfPageIndex === 0) return false;
@@ -95,6 +96,35 @@ export function isCatalogContentPage(pageText: string, pdfPageIndex: number): bo
   }
 
   return hasSku || (hasPrice && hasProductBlock);
+}
+
+/**
+ * Critério para enviar a página à IA de visão.
+ * Diferente de `isCatalogContentPage`: páginas com pouco/nenhum texto nativo
+ * (PDF só-imagem) DEVEM ir para a IA — o filtro antigo as descartava e
+ * perdia produtos quando outras páginas já tinham passado.
+ */
+export function shouldSendPageToCatalogAi(pageText: string, pdfPageIndex: number): boolean {
+  if (pdfPageIndex === 0) return false;
+
+  const t = pageText.replace(/\s+/g, ' ').trim();
+  const skus = findOrderedUniqueSkuMatches(pageText);
+  const hasProductBlock = /quantidade\s*\/\s*caixa|caixa\s*:\s*\d+\s*p[çc]/i.test(t);
+
+  // Divisória/promoção curta sem produtos — mesmo com pouco texto.
+  if (
+    COVER_PROMO_REGEX.test(t) &&
+    skus.length < 2 &&
+    !hasProductBlock &&
+    t.length < 400
+  ) {
+    return false;
+  }
+
+  // Sem texto confiável: a visão da IA é o caminho certo.
+  if (pageTextLooksInsufficient(pageText)) return true;
+
+  return true;
 }
 
 /**
