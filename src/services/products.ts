@@ -2,6 +2,15 @@ import { isSupabaseConfigured, supabase, syncAuthBeforeDbRead } from '@/lib/supa
 import { mapProduct } from './mappers';
 import type { Product } from '@/types';
 
+/** PostgREST/Supabase limita cada resposta a 1000 linhas por padrão. */
+export const PRODUCTS_PAGE_SIZE = 1000;
+
+export type ProductFilters = {
+  importadoraId?: string;
+  category?: string;
+  active?: boolean;
+};
+
 function assertSupabaseConfigured() {
   if (!isSupabaseConfigured()) {
     throw new Error(
@@ -10,22 +19,81 @@ function assertSupabaseConfigured() {
   }
 }
 
-export async function fetchProducts(filters?: {
-  importadoraId?: string;
-  category?: string;
-  active?: boolean;
-}): Promise<Product[]> {
+type FilterableQuery = {
+  eq: (column: string, value: unknown) => FilterableQuery;
+};
+
+function applyProductFilters<T extends FilterableQuery>(q: T, filters?: ProductFilters): T {
+  let next: FilterableQuery = q;
+  if (filters?.importadoraId) next = next.eq('importadora_id', filters.importadoraId);
+  if (filters?.category) next = next.eq('category', filters.category);
+  if (filters?.active != null) next = next.eq('active', filters.active);
+  return next as T;
+}
+
+/**
+ * Busca todos os produtos, paginando além do limite padrão do Supabase (1000).
+ */
+export async function fetchProducts(filters?: ProductFilters): Promise<Product[]> {
   await syncAuthBeforeDbRead();
-  let q = supabase
-    .from('products')
-    .select('*, importadoras(name)')
-    .order('name');
-  if (filters?.importadoraId) q = q.eq('importadora_id', filters.importadoraId);
-  if (filters?.category) q = q.eq('category', filters.category);
-  if (filters?.active != null) q = q.eq('active', filters.active);
-  const { data, error } = await q;
+  const all: Product[] = [];
+  let from = 0;
+
+  for (;;) {
+    let q = supabase
+      .from('products')
+      .select('*, importadoras(name)')
+      .order('name')
+      .order('id');
+    q = applyProductFilters(q, filters);
+    const { data, error } = await q.range(from, from + PRODUCTS_PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    all.push(...rows.map(mapProduct));
+    if (rows.length < PRODUCTS_PAGE_SIZE) break;
+    from += PRODUCTS_PAGE_SIZE;
+  }
+
+  return all;
+}
+
+/** Contagem exata no banco (não sujeita ao limite de 1000 linhas do select). */
+export async function countProducts(filters?: ProductFilters): Promise<number> {
+  await syncAuthBeforeDbRead();
+  let q = supabase.from('products').select('id', { count: 'exact', head: true });
+  q = applyProductFilters(q, filters);
+  const { count, error } = await q;
   if (error) throw error;
-  return (data ?? []).map(mapProduct);
+  return count ?? 0;
+}
+
+/**
+ * Contagem de produtos por importadora, paginando só o campo necessário.
+ * Evita subcontar quando há mais de 1000 produtos no total.
+ */
+export async function fetchProductCountsByImportadora(): Promise<Record<string, number>> {
+  await syncAuthBeforeDbRead();
+  const counts: Record<string, number> = {};
+  let from = 0;
+
+  for (;;) {
+    const { data, error } = await supabase
+      .from('products')
+      .select('importadora_id')
+      .order('id')
+      .range(from, from + PRODUCTS_PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    for (const row of rows) {
+      const id = String(row.importadora_id ?? '');
+      if (!id) continue;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    if (rows.length < PRODUCTS_PAGE_SIZE) break;
+    from += PRODUCTS_PAGE_SIZE;
+  }
+
+  return counts;
 }
 
 export async function getProduct(id: string): Promise<Product | null> {
@@ -190,21 +258,31 @@ export async function fetchProductCodesByImportadora(
 ): Promise<Map<string, string>> {
   assertSupabaseConfigured();
 
-  const { data, error } = await supabase
-    .from('products')
-    .select('id, code')
-    .eq('importadora_id', importadoraId);
-  if (error) throw error;
-
   const map = new Map<string, string>();
-  for (const row of data ?? []) {
-    const key = String(row.code ?? '')
-      .trim()
-      .toUpperCase();
-    if (key && !map.has(key)) {
-      map.set(key, row.id as string);
+  let from = 0;
+
+  for (;;) {
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, code')
+      .eq('importadora_id', importadoraId)
+      .order('id')
+      .range(from, from + PRODUCTS_PAGE_SIZE - 1);
+    if (error) throw error;
+
+    const rows = data ?? [];
+    for (const row of rows) {
+      const key = String(row.code ?? '')
+        .trim()
+        .toUpperCase();
+      if (key && !map.has(key)) {
+        map.set(key, row.id as string);
+      }
     }
+    if (rows.length < PRODUCTS_PAGE_SIZE) break;
+    from += PRODUCTS_PAGE_SIZE;
   }
+
   return map;
 }
 

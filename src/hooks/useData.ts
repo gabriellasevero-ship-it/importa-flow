@@ -88,6 +88,56 @@ export function useProducts(filters?: { importadoraId?: string; category?: strin
   return { products: list, loading, refetch };
 }
 
+/** Totais exatos no banco (não truncados pelo limite de 1000 do select). */
+export function useProductTotals() {
+  const [total, setTotal] = useState(0);
+  const [active, setActive] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [totalCount, activeCount] = await Promise.all([
+        productsApi.countProducts(),
+        productsApi.countProducts({ active: true }),
+      ]);
+      setTotal(totalCount);
+      setActive(activeCount);
+    } catch (e) {
+      console.error(e);
+      setTotal(0);
+      setActive(0);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+  return { total, active, loading, refetch };
+}
+
+/** Contagem de produtos por importadora (paginada; cobre catálogos > 1000 itens). */
+export function useProductCountsByImportadora() {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await productsApi.fetchProductCountsByImportadora();
+      setCounts(data);
+    } catch (e) {
+      console.error(e);
+      setCounts({});
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+  return { counts, loading, refetch };
+}
+
 export function useClientes() {
   const { user } = useAuth();
   const [list, setList] = useState<Cliente[]>([]);
