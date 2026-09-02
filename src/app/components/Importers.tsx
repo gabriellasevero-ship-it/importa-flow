@@ -15,7 +15,7 @@ import { Label } from '@/app/components/ui/label';
 import { Switch } from '@/app/components/ui/switch';
 import { toast } from 'sonner';
 import { ImporterDetail } from '@/app/components/ImporterDetail';
-import { useImportadoras, useProducts } from '@/hooks/useData';
+import { useImportadoras, useProductCountsByImportadora } from '@/hooks/useData';
 import {
   createImportadora,
   updateImportadora,
@@ -51,7 +51,7 @@ function toImporterView(imp: Importadora, productsCount: number): ImporterView {
 
 export const Importers: React.FC = () => {
   const { importadoras, loading, refetch } = useImportadoras();
-  const { products } = useProducts();
+  const { counts: productCounts, refetch: refetchProductCounts } = useProductCountsByImportadora();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [editingImporter, setEditingImporter] = useState<Importadora | null>(null);
@@ -68,12 +68,15 @@ export const Importers: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const getProductsCount = (importadoraId: string) =>
-    products.filter((p) => p.importadoraId === importadoraId).length;
+  const getProductsCount = (importadoraId: string) => productCounts[importadoraId] ?? 0;
 
   const importersView: ImporterView[] = importadoras.map((imp) =>
     toImporterView(imp, getProductsCount(imp.id))
   );
+
+  const refreshLists = async () => {
+    await Promise.all([refetch(), refetchProductCounts()]);
+  };
 
   const validateForm = () => {
     const newErrors = { name: '', cnpj: '', representanteCommissionPct: '' };
@@ -155,7 +158,7 @@ export const Importers: React.FC = () => {
     setDeleting(true);
     try {
       await deleteImportadora(deletingImporter.id);
-      await refetch();
+      await refreshLists();
       toast.success('Importadora excluída com sucesso!');
       setShowDeleteDialog(false);
       setDeletingImporter(null);
@@ -188,9 +191,12 @@ export const Importers: React.FC = () => {
     return (
       <ImporterDetail
         importer={viewingImporter}
-        onBack={() => setViewingImporter(null)}
+        onBack={() => {
+          void refetchProductCounts();
+          setViewingImporter(null);
+        }}
         onUpdate={(updatedImporter) => {
-          refetch();
+          void refreshLists();
           setViewingImporter({
             ...updatedImporter,
             productsCount: updatedImporter.productsCount,
@@ -199,7 +205,7 @@ export const Importers: React.FC = () => {
         onDelete={async (importerId) => {
           try {
             await deleteImportadora(importerId);
-            await refetch();
+            await refreshLists();
             toast.success('Importadora excluída com sucesso!');
             setViewingImporter(null);
           } catch (e) {
