@@ -274,20 +274,25 @@ export const Importers: React.FC = () => {
           {filteredImporters.map((importer) => (
             <Card 
               key={importer.id} 
-              className="hover:shadow-lg transition-shadow cursor-pointer"
+              className="min-w-0 overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
               onClick={() => setViewingImporter(importer)}
             >
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <Building2 className="w-6 h-6 text-primary" />
+              <CardHeader className="min-w-0 overflow-hidden pb-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Building2 className="h-6 w-6 text-primary" />
                     </div>
-                    <div className="min-w-0">
-                      <CardTitle className="text-lg truncate">{importer.name}</CardTitle>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <CardTitle
+                        className="block min-w-0 truncate text-lg"
+                        title={importer.name}
+                      >
+                        {importer.name}
+                      </CardTitle>
                     </div>
                   </div>
-                  <Eye className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <Eye className="h-5 w-5 shrink-0 text-muted-foreground" />
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
