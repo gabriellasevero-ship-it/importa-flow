@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Button } from '@/app/components/ui/button';
 import { Badge } from '@/app/components/ui/badge';
 import { useOrders } from '@/contexts/OrdersContext';
-import { useImportadoras, useProducts, useCommissions, useRepresentatives } from '@/hooks/useData';
+import { useImportadoras, useProductTotals, useCommissions, useRepresentatives } from '@/hooks/useData';
 import { getRepresentanteCommissionPercent } from '@/lib/representanteCommission';
 import { cn } from '@/app/components/ui/utils';
 
@@ -103,7 +103,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
     void refetchOrders();
   }, [refetchOrders]);
   const { importadoras } = useImportadoras();
-  const { products } = useProducts();
+  const { total: totalProdutos, active: produtosAtivos } = useProductTotals();
   const { commissions } = useCommissions();
   const { representatives } = useRepresentatives();
 
@@ -131,8 +131,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, mode }) => {
   const importadorasAtivas = importadoras.filter((i) => i.active).length;
   const totalRepresentantes = representatives.length;
   const representantesAtivos = representatives.filter((r) => r.status === 'active').length;
-  const totalProdutos = products.length;
-  const produtosAtivos = products.filter((p) => p.active).length;
   const totalPedidos = orders.length;
 
   if (effectiveRole === 'admin') {
